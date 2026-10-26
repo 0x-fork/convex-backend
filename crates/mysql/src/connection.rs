@@ -4,10 +4,12 @@ use std::{
     mem,
     path::PathBuf,
     str::FromStr,
+    sync::OnceLock,
     time::Duration,
 };
 
 use ::metrics::StaticMetricLabel;
+use anyhow::Context as _;
 use common::{
     errors::{
         database_deadlock_error,
@@ -650,6 +652,7 @@ impl MySqlTransaction<'_> {
 }
 
 pub struct ConvexMySqlPool<RT: Runtime> {
+    pub(crate) v6_replica: OnceLock<crate::v6_replica::ReplicaTarget<RT>>,
     pool: Pool,
     use_prepared_statements: bool,
     runtime: Option<RT>,
@@ -742,6 +745,7 @@ impl<RT: Runtime> ConvexMySqlPool<RT> {
             opts = opts.ssl_opts(ssl_opts);
         }
         Ok(Self {
+            v6_replica: OnceLock::new(),
             pool: Pool::new(opts),
             use_prepared_statements,
             runtime,
@@ -780,6 +784,15 @@ impl<RT: Runtime> ConvexMySqlPool<RT> {
 
     pub fn cluster_name(&self) -> &str {
         &self.cluster_name
+    }
+
+    /// Set before opening deployments: each writer keeps its initial target
+    /// for its lifetime.
+    pub fn set_v6_replica(&self, target: crate::V6ReplicaTarget<RT>) -> anyhow::Result<()> {
+        self.v6_replica
+            .set(target)
+            .ok()
+            .context("V6 replica target is already set")
     }
 
     /// Report gauges with information about the MySQL pool.

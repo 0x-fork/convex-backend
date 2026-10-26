@@ -7347,6 +7347,7 @@ dependencies = [
  "lz4_flex 0.14.0",
  "metrics",
  "mysql_async",
+ "parking_lot",
  "prometheus",
  "proptest",
  "rand 0.9.4",

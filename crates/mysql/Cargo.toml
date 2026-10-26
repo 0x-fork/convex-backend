@@ -21,6 +21,7 @@ testing = [
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 bytes = { workspace = true }
+cmd_util = { workspace = true }
 common = { workspace = true }
 const-hex = { workspace = true }
 const_format = { workspace = true }
@@ -33,11 +34,13 @@ itertools = { workspace = true }
 lz4_flex = { workspace = true }
 metrics = { workspace = true }
 mysql_async = { workspace = true }
+parking_lot = { workspace = true }
 prometheus = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 smallvec = { workspace = true }
+strum = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -45,7 +48,6 @@ url = { workspace = true }
 value = { workspace = true }
 
 [dev-dependencies]
-cmd_util = { workspace = true }
 common = { workspace = true, features = ["testing"] }
 convex_macro = { workspace = true, features = ["testing"] }
 database = { workspace = true, features = ["testing"] }
@@ -54,7 +56,6 @@ indexing = { workspace = true }
 metrics = { workspace = true, features = ["testing"] }
 proptest = { workspace = true }
 runtime = { workspace = true }
-strum = { workspace = true }
 value = { workspace = true, features = ["testing"] }
 
 [lints]

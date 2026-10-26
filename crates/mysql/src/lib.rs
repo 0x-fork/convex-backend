@@ -9,10 +9,8 @@ mod document_encoding;
 mod metrics;
 mod sql;
 mod v5;
-mod v5_shadow;
-pub use v5_shadow::maintenance as v5_shadow_maintenance;
-use v5_shadow::V5Shadow as _;
 mod v6;
+mod v6_replica;
 use std::{
     ops::Deref,
     sync::Arc,
@@ -34,6 +32,10 @@ pub use connection::ConvexMySqlPool;
 pub use v6::maintenance::{
     IndexesLogMaintenance,
     MaintenanceRound,
+};
+pub use v6_replica::{
+    maintenance as v6_replica_maintenance,
+    ReplicaTarget as V6ReplicaTarget,
 };
 
 /// Maximum number of documents in one write: the sum of
@@ -101,16 +103,16 @@ pub async fn connect_persistence<RT: Runtime>(
 ) -> anyhow::Result<Arc<dyn Persistence>> {
     match options.version {
         PersistenceVersion::V5 => {
-            let shadow = v5_shadow::active_shadow::<RT>();
-            match v5_shadow::connection_mode(&shadow, pool.cluster_name(), options.multitenant) {
-                v5_shadow::ShadowMode::Off => {
-                    v5::connect(pool, db_name, options, lease_lost_shutdown).await
-                },
-                mode => {
-                    shadow
-                        .connect(mode, pool, db_name, options, lease_lost_shutdown)
-                        .await
-                },
+            if options.multitenant
+                && let Some(target) = pool.v6_replica.get().cloned()
+            {
+                Ok(Arc::new(
+                    v6_replica::ReplicatedV5PersistenceFactory::configured(target)
+                        .open(pool, db_name, options, lease_lost_shutdown)
+                        .await?,
+                ))
+            } else {
+                v5::connect(pool, db_name, options, lease_lost_shutdown).await
             }
         },
         PersistenceVersion::V6 => v6::connect(pool, db_name, options, lease_lost_shutdown).await,

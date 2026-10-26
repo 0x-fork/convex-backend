@@ -181,6 +181,18 @@ impl<RT: Runtime> DeploymentDeletionPool<RT> {
         })
     }
 
+    pub(crate) fn from_pool(
+        pool: Arc<ConvexMySqlPool<RT>>,
+        db_name: String,
+        version: PersistenceVersion,
+    ) -> Self {
+        Self {
+            pool,
+            db_name,
+            version,
+        }
+    }
+
     pub fn target(&self, name: MySqlInstanceName, id: DeploymentId) -> DeploymentDeletionTarget {
         match self.version {
             PersistenceVersion::V5 => DeploymentDeletionTarget::V5(name),
@@ -229,25 +241,6 @@ pub struct DeploymentDeleter<RT: Runtime> {
 }
 
 impl<RT: Runtime> DeploymentDeleter<RT> {
-    pub(crate) fn pool(&self) -> &Arc<ConvexMySqlPool<RT>> {
-        &self.pool
-    }
-
-    #[allow(
-        dead_code,
-        reason = "Consumed by the opt-in shadow implementation in the follow-up PR"
-    )]
-    pub(crate) fn db_name(&self) -> &str {
-        &self.db_name
-    }
-
-    pub(crate) fn v5_instance_name(&self) -> Option<&str> {
-        match (&self.version, &self.tenant) {
-            (PersistenceVersion::V5, Value::Bytes(name)) => std::str::from_utf8(name).ok(),
-            _ => None,
-        }
-    }
-
     pub async fn begin(&self) -> anyhow::Result<DeploymentDeletionCursor> {
         let mut conn = self
             .pool
@@ -497,7 +490,6 @@ impl<RT: Runtime> DeploymentDeleter<RT> {
 
     /// Call only after `delete_batch()` returns no next cursor.
     pub async fn finish(&self) -> anyhow::Result<u64> {
-        crate::v5_shadow::cleanup(self).await?;
         let mut conn = self
             .pool
             .acquire("finish_deployment_deletion", &self.db_name)
@@ -522,6 +514,21 @@ impl<RT: Runtime> DeploymentDeleter<RT> {
         )
         .await?;
         Ok(globals_deleted)
+    }
+
+    /// Pauses between batches to let MySQL replication catch up.
+    pub async fn delete_all(&self) -> anyhow::Result<()> {
+        let mut cursor = self.begin().await?;
+        loop {
+            let batch = self.delete_batch(&cursor).await?;
+            let Some(next) = batch.next_cursor else {
+                break;
+            };
+            cursor = next;
+            tokio::time::sleep(batch.replication_delay).await;
+        }
+        self.finish().await?;
+        Ok(())
     }
 }
 
