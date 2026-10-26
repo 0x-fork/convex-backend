@@ -884,12 +884,14 @@ impl AdminIdentity {
     }
 }
 
+// `key` is a usable admin key, so it is omitted to keep it out of logs, spans,
+// and error contexts that `{:?}`-format identities.
 impl fmt::Debug for AdminIdentity {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "{}/{:?}/{}/{:?}",
-            self.deployment_name, self.principal, self.key, self.allowed_ops,
+            "{}/{:?}/{:?}/read_only={}",
+            self.deployment_name, self.principal, self.allowed_ops, self.is_read_only,
         )
     }
 }
@@ -1063,7 +1065,13 @@ impl KeyBroker {
                     .decode_proto(ADMIN_KEY_VERSION, encrypted_part)
                     .inspect(|_| log_legacy_admin_key())
             })
-            .with_context(|| format!("Couldn't decode the AdminKeyProto {key}"))?;
+            .with_context(|| {
+                format!(
+                    "Couldn't decode the AdminKeyProto for deployment {instance_name:?} (key \
+                     length {})",
+                    key.len()
+                )
+            })?;
         let instance_name = instance_name
             .or(instance_name_from_encrypted_part.as_deref())
             .context("Invalid admin key format")?;
