@@ -23,7 +23,10 @@ use keybroker::Identity;
 use model::{
     log_sinks::{
         types::{
-            s3_export::SyncPeriod,
+            s3_export::{
+                S3ExportCredentials,
+                SyncPeriod,
+            },
             LogSinksRow,
             SinkConfig,
             SinkType,
@@ -40,6 +43,7 @@ use model::{
 };
 use streaming_export::{
     managed::{
+        ByoAwsCredentials,
         SyncDestination,
         SyncFormat,
     },
@@ -118,6 +122,14 @@ impl<RT: Runtime> S3ExportWorker<RT> {
         let SinkConfig::S3Export(config) = &export.config else {
             anyhow::bail!("S3 export document has a different configuration type");
         };
+        if !config.credentials.is_ready() {
+            self.gauges.clear();
+            let token = tx.into_token()?;
+            self.database
+                .subscribe_and_wait_for_invalidation(token)
+                .await?;
+            return Ok(());
+        }
         // A page that hangs keeps aging past this.
         self.gauges.start(self.runtime.system_time());
         let state = S3ExportStateModel::new(&mut tx)
@@ -147,8 +159,22 @@ impl<RT: Runtime> S3ExportWorker<RT> {
                         region: config.region.clone(),
                         prefix: config.prefix.clone(),
                         endpoint_url: None,
-                        access_key_id: config.access_key_id.0.clone(),
-                        secret_access_key: config.secret_access_key.0.clone(),
+                        credentials: match &config.credentials {
+                            S3ExportCredentials::AccessKey {
+                                access_key_id,
+                                secret_access_key,
+                            } => ByoAwsCredentials::AccessKey {
+                                access_key_id: access_key_id.0.clone(),
+                                secret_access_key: secret_access_key.0.clone(),
+                            },
+                            S3ExportCredentials::Role {
+                                role_arn,
+                                external_id,
+                            } => ByoAwsCredentials::Role {
+                                role_arn: role_arn.clone(),
+                                external_id: external_id.clone(),
+                            },
+                        },
                     },
                     SyncFormat::Iceberg,
                     &config.selection,

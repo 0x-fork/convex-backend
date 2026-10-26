@@ -1750,6 +1750,13 @@
               "id": {
                 "type": "string"
               },
+              "roleExternalId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Set for role exports. The role's trust policy must require it as\n`sts:ExternalId`."
+              },
               "logStreamType": {
                 "type": "string",
                 "enum": [
@@ -1820,8 +1827,6 @@
         "required": [
           "bucket",
           "region",
-          "accessKeyId",
-          "secretAccessKey",
           "period"
         ],
         "properties": {
@@ -1841,10 +1846,24 @@
             "description": "Key prefix within the bucket. Omit to write at the bucket root."
           },
           "accessKeyId": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Access key of an IAM user that can write to the bucket. Send both key\nfields, or `roleArn` instead."
           },
           "secretAccessKey": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "roleArn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ARN of a role in the bucket's account that Convex assumes to write.\nSend an empty string to create the export first: the response carries\nthe `roleExternalId` the role's trust policy needs, and the export waits\nuntil an update supplies the ARN."
           },
           "selection": {
             "oneOf": [
@@ -2892,7 +2911,6 @@
           "status",
           "bucket",
           "region",
-          "accessKeyId",
           "selection",
           "period"
         ],
@@ -2920,8 +2938,25 @@
             "description": "Key prefix within the bucket."
           },
           "accessKeyId": {
-            "type": "string",
-            "description": "AWS access key ID used to write to the bucket. The matching secret\naccess key is write-only and is never returned."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "AWS access key ID used to write to the bucket. The matching secret\naccess key is write-only and is never returned. Absent for role exports."
+          },
+          "roleArn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ARN of the role Convex assumes to write. Empty until the admin pastes\nit. Absent for access-key exports."
+          },
+          "roleExternalId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Value the role's trust policy must require as `sts:ExternalId`."
           },
           "selection": {
             "$ref": "#/components/schemas/Selection",
@@ -3417,7 +3452,15 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "A new secret for the export's access key ID. Access-key exports only."
+          },
+          "roleArn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The role ARN from the customer's stack. Role exports only; sets or\nreplaces the ARN, within the same AWS account."
           },
           "selection": {
             "oneOf": [

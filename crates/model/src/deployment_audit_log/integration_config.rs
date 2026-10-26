@@ -12,6 +12,7 @@ use crate::log_sinks::types::{
     posthog_logs::DEFAULT_POSTHOG_HOST,
     s3_export::{
         S3ExportConfig,
+        S3ExportCredentials,
         SyncPeriod,
     },
     serialize_topics,
@@ -114,6 +115,8 @@ pub enum IntegrationAuditCredentialChanges {
     S3Export {
         access_key_id_changed: bool,
         secret_access_key_changed: bool,
+        #[serde(default)]
+        role_arn_changed: bool,
     },
 }
 
@@ -233,9 +236,35 @@ pub fn audit_credential_changes(
             let SinkConfig::S3Export(previous) = previous else {
                 return None;
             };
+            let (access_key_id_changed, secret_access_key_changed, role_arn_changed) =
+                match (&previous.credentials, &current.credentials) {
+                    (
+                        S3ExportCredentials::AccessKey {
+                            access_key_id,
+                            secret_access_key,
+                        },
+                        S3ExportCredentials::AccessKey {
+                            access_key_id: new_id,
+                            secret_access_key: new_secret,
+                        },
+                    ) => (
+                        access_key_id != new_id,
+                        secret_access_key != new_secret,
+                        false,
+                    ),
+                    (
+                        S3ExportCredentials::Role { role_arn, .. },
+                        S3ExportCredentials::Role {
+                            role_arn: new_arn, ..
+                        },
+                    ) => (false, false, role_arn != new_arn),
+                    // Switching between keys and a role replaces every credential.
+                    _ => (true, true, true),
+                };
             IntegrationAuditCredentialChanges::S3Export {
-                access_key_id_changed: previous.access_key_id != current.access_key_id,
-                secret_access_key_changed: previous.secret_access_key != current.secret_access_key,
+                access_key_id_changed,
+                secret_access_key_changed,
+                role_arn_changed,
             }
         },
         SinkConfig::Local(_) => return None,

@@ -249,7 +249,7 @@ impl TryFrom<SerializedSinkConfig> for SinkConfig {
             SerializedSinkConfig::PostHogErrorTracking(config) => {
                 Ok(SinkConfig::PostHogErrorTracking(config.into()))
             },
-            SerializedSinkConfig::S3Export(config) => Ok(SinkConfig::S3Export(config.into())),
+            SerializedSinkConfig::S3Export(config) => Ok(SinkConfig::S3Export(config.try_into()?)),
         }
     }
 }

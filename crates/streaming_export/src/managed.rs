@@ -17,11 +17,23 @@ pub enum SyncDestination {
         /// Set for S3-compatible services (MinIO, Cloudflare R2); `None` uses
         /// the AWS endpoint for `region`.
         endpoint_url: Option<String>,
-        access_key_id: String,
-        secret_access_key: String,
+        credentials: ByoAwsCredentials,
     },
     /// A Convex-owned bucket, whose location the writer derives itself.
     Managed,
+}
+
+/// How Porter signs its writes to a customer's bucket.
+pub enum ByoAwsCredentials {
+    AccessKey {
+        access_key_id: String,
+        secret_access_key: String,
+    },
+    /// A role in the customer's account, assumed with the export's ExternalId.
+    Role {
+        role_arn: String,
+        external_id: String,
+    },
 }
 
 /// The on-disk format written to the destination.

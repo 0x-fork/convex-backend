@@ -55,6 +55,7 @@ use model::log_sinks::types::{
     posthog_logs::PostHogLogsConfig,
     s3_export::{
         S3ExportConfig,
+        S3ExportCredentials,
         SyncPeriod,
     },
     sentry::{
@@ -498,11 +499,24 @@ fn ensure_same_s3_destination(
         !existing.requires_resync(&updated),
         ErrorMetadata::bad_request(
             "S3ExportDestinationChanged",
-            "An S3 export's bucket, region, prefix, and access key ID can't change. Delete the \
+            "An S3 export's bucket, region, prefix, and credential type can't change. Delete the \
              export and create a new one instead.",
         )
     );
     Ok(updated)
+}
+
+// The prefix lands in IAM policy resource ARNs, where `*` and `?` are wildcards
+// and `$` starts a policy variable.
+fn validate_s3_prefix(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !prefix.contains(['*', '?', '$']),
+        ErrorMetadata::bad_request(
+            "InvalidS3Prefix",
+            "Prefixes may not contain `*`, `?` or `$`",
+        )
+    );
+    Ok(())
 }
 
 fn validate_s3_bucket(bucket: &str) -> anyhow::Result<()> {
@@ -541,8 +555,20 @@ pub struct CreateS3ExportLogStreamArgs {
     /// Key prefix within the bucket. Omit to write at the bucket root.
     #[serde(default)]
     prefix: Option<String>,
-    access_key_id: String,
-    secret_access_key: String,
+    /// Access key of an IAM user that can write to the bucket. Send both key
+    /// fields, or `roleArn` instead.
+    // TODO(ENG-11116): drop the access key fields once existing exports have
+    // moved to roles, so an export authenticates with a role only.
+    #[serde(default)]
+    access_key_id: Option<String>,
+    #[serde(default)]
+    secret_access_key: Option<String>,
+    /// ARN of a role in the bucket's account that Convex assumes to write.
+    /// Send an empty string to create the export first: the response carries
+    /// the `roleExternalId` the role's trust policy needs, and the export waits
+    /// until an update supplies the ARN.
+    #[serde(default)]
+    role_arn: Option<String>,
     /// The components and tables to export. Defaults to everything. Each table
     /// exports whole documents, so filtering fields within a table is rejected.
     #[serde(default)]
@@ -556,14 +582,30 @@ impl TryFrom<CreateS3ExportLogStreamArgs> for S3ExportConfig {
 
     fn try_from(value: CreateS3ExportLogStreamArgs) -> Result<Self, Self::Error> {
         validate_s3_bucket(&value.bucket)?;
+        validate_s3_prefix(value.prefix.as_deref().unwrap_or_default())?;
         let selection = value.selection.unwrap_or_default();
         validate_s3_selection(&selection)?;
+        let credentials = match (value.access_key_id, value.secret_access_key, value.role_arn) {
+            (Some(access_key_id), Some(secret_access_key), None) => {
+                S3ExportCredentials::AccessKey {
+                    access_key_id: access_key_id.into(),
+                    secret_access_key: secret_access_key.into(),
+                }
+            },
+            (None, None, Some(role_arn)) => S3ExportCredentials::Role {
+                role_arn,
+                external_id: S3ExportCredentials::new_external_id(),
+            },
+            _ => anyhow::bail!(ErrorMetadata::bad_request(
+                "S3ExportCredentialsRequired",
+                "Send `accessKeyId` with `secretAccessKey`, or `roleArn` on its own.",
+            )),
+        };
         Ok(Self {
             bucket: value.bucket,
             region: value.region,
             prefix: value.prefix,
-            access_key_id: value.access_key_id.into(),
-            secret_access_key: value.secret_access_key.into(),
+            credentials,
             selection,
             period: value.period,
         })
@@ -627,7 +669,14 @@ pub enum CreateLogStreamResponse {
     #[schema(title = "PostHogErrorTracking")]
     PostHogErrorTracking { id: String },
     #[schema(title = "S3Export")]
-    S3Export { id: String },
+    #[serde(rename_all = "camelCase")]
+    S3Export {
+        id: String,
+        /// Set for role exports. The role's trust policy must require it as
+        /// `sts:ExternalId`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        role_external_id: Option<String>,
+    },
 }
 
 async fn ensure_log_sink_does_not_exist(
@@ -802,6 +851,10 @@ pub async fn create_log_stream(
             ensure_log_sink_does_not_exist(&st.application, &SinkType::S3Export).await?;
 
             let config: S3ExportConfig = args.try_into()?;
+            let role_external_id = match &config.credentials {
+                S3ExportCredentials::Role { external_id, .. } => Some(external_id.clone()),
+                S3ExportCredentials::AccessKey { .. } => None,
+            };
             let id = st
                 .application
                 .add_log_sink(
@@ -812,6 +865,7 @@ pub async fn create_log_stream(
                 .await?;
             Ok(Json(CreateLogStreamResponse::S3Export {
                 id: id.to_string(),
+                role_external_id,
             }))
         },
     }
@@ -1024,8 +1078,16 @@ pub struct S3ExportLogStreamConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prefix: Option<String>,
     /// AWS access key ID used to write to the bucket. The matching secret
-    /// access key is write-only and is never returned.
-    pub access_key_id: String,
+    /// access key is write-only and is never returned. Absent for role exports.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_key_id: Option<String>,
+    /// ARN of the role Convex assumes to write. Empty until the admin pastes
+    /// it. Absent for access-key exports.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role_arn: Option<String>,
+    /// Value the role's trust policy must require as `sts:ExternalId`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role_external_id: Option<String>,
     /// The components and tables being exported.
     pub selection: Selection,
     /// How often the mirror is refreshed.
@@ -1083,16 +1145,29 @@ fn log_sink_to_log_stream_config(sink: LogSinkWithId) -> Option<LogStreamConfig>
                 host: config.host,
             },
         )),
-        SinkConfig::S3Export(config) => Some(LogStreamConfig::S3Export(S3ExportLogStreamConfig {
-            id: sink.id.to_string(),
-            status,
-            bucket: config.bucket,
-            region: config.region,
-            prefix: config.prefix,
-            access_key_id: config.access_key_id.into_value(),
-            selection: config.selection,
-            period: config.period,
-        })),
+        SinkConfig::S3Export(config) => {
+            let (access_key_id, role_arn, role_external_id) = match config.credentials {
+                S3ExportCredentials::AccessKey { access_key_id, .. } => {
+                    (Some(access_key_id.into_value()), None, None)
+                },
+                S3ExportCredentials::Role {
+                    role_arn,
+                    external_id,
+                } => (None, Some(role_arn), Some(external_id)),
+            };
+            Some(LogStreamConfig::S3Export(S3ExportLogStreamConfig {
+                id: sink.id.to_string(),
+                status,
+                bucket: config.bucket,
+                region: config.region,
+                prefix: config.prefix,
+                access_key_id,
+                role_arn,
+                role_external_id,
+                selection: config.selection,
+                period: config.period,
+            }))
+        },
         _ => None,
     }
 }
@@ -1274,8 +1349,13 @@ pub struct UpdatePostHogErrorTrackingSinkArgs {
 #[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpdateS3ExportSinkArgs {
+    /// A new secret for the export's access key ID. Access-key exports only.
     #[serde(default)]
     secret_access_key: Option<String>,
+    /// The role ARN from the customer's stack. Role exports only; sets or
+    /// replaces the ARN, within the same AWS account.
+    #[serde(default)]
+    role_arn: Option<String>,
     /// The components and tables to export. Each table exports whole
     /// documents, so filtering fields within a table is rejected.
     #[serde(default)]
@@ -1585,11 +1665,35 @@ pub async fn update_log_stream(
             if let Some(selection) = &update_args.selection {
                 validate_s3_selection(selection)?;
             }
+            let credentials = match (
+                existing_config.credentials.clone(),
+                update_args.secret_access_key,
+                update_args.role_arn,
+            ) {
+                (credentials, None, None) => credentials,
+                (S3ExportCredentials::AccessKey { access_key_id, .. }, Some(secret), None) => {
+                    S3ExportCredentials::AccessKey {
+                        access_key_id,
+                        secret_access_key: secret.into(),
+                    }
+                },
+                (S3ExportCredentials::Role { external_id, .. }, None, Some(role_arn)) => {
+                    S3ExportCredentials::Role {
+                        role_arn,
+                        external_id,
+                    }
+                },
+                _ => {
+                    return Err(anyhow::anyhow!(ErrorMetadata::bad_request(
+                        "S3ExportCredentialTypeMismatch",
+                        "Send `secretAccessKey` for an access-key export or `roleArn` for a role \
+                         export, not the other.",
+                    ))
+                    .into());
+                },
+            };
             let config = S3ExportConfig {
-                secret_access_key: update_args
-                    .secret_access_key
-                    .map(|k| k.into())
-                    .unwrap_or(existing_config.secret_access_key.clone()),
+                credentials,
                 selection: update_args
                     .selection
                     .unwrap_or(existing_config.selection.clone()),
