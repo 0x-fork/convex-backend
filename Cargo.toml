@@ -177,7 +177,7 @@ qdrant_segment = { git = "https://github.com/convex/qdrant", rev = "a5d1b7bc9fd0
 quote = "1.0"
 rand = "0.9"
 rand_chacha = "0.9.0"
-rc-zip = { version = "5", features = [ "deflate", "deflate64", "zstd" ] }
+rc-zip = { version = "5", features = [ "deflate", "deflate64" ] }
 ref-cast = "1.0.20"
 regex = "1"
 reqwest = { version = "0.13", features = [ "json", "query", "stream", "gzip", "rustls" ] }

@@ -9349,7 +9349,6 @@ dependencies = [
  "ownable",
  "tracing",
  "winnow 0.5.40",
- "zstd 0.13.3",
 ]
 
 [[package]]
