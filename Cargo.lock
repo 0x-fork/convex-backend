@@ -7495,7 +7495,6 @@ dependencies = [
  "fastrace",
  "futures",
  "futures-async-stream",
- "home",
  "isolate",
  "keybroker",
  "maplit",

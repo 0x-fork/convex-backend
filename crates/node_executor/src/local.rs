@@ -43,7 +43,6 @@ use crate::{
     NodeExecutorStreamPart,
 };
 
-const NVMRC_VERSION: &str = include_str!("../../../.nvmrc");
 const HEALTH_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_HEALTH_CHECK_ATTEMPTS: u32 = 50;
 
@@ -163,19 +162,8 @@ impl InnerLocalNodeExecutor {
         temp_dir: &TempDir,
         socket_path: &PathBuf,
     ) -> anyhow::Result<Child> {
-        let preferred_node_version = NVMRC_VERSION.trim();
-
-        // Look for node in a few places.
-        let possible_path = home::home_dir()
-            .unwrap()
-            .join(".nvm")
-            .join(format!("versions/node/v{preferred_node_version}/bin/node"));
-        let node_path = if possible_path.exists() {
-            possible_path.to_string_lossy().to_string()
-        } else {
-            "node".to_string()
-        };
-        Self::check_node_version(&node_path).await?;
+        let node_path = "node";
+        Self::check_node_version(node_path).await?;
 
         let mut cmd = TokioCommand::new(node_path);
         cmd.arg(source_path)
