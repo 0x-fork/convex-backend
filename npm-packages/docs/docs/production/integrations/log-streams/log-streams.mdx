@@ -224,6 +224,7 @@ Example event for `console.log("Sent message!")` from a mutation:
     "function": {
       "path": "messages:send",
       "request_id": "d064ef901f7ec0b7",
+      "runtime": "convex",
       "type": "mutation"
     },
     "log_level": "LOG",
@@ -339,6 +340,7 @@ Example event for a query:
       "cached": false,
       "path": "message:list",
       "request_id": "892104e63bd39d9a",
+      "runtime": "convex",
       "type": "query"
     },
     "status": "success",
@@ -441,6 +443,10 @@ The following fields are added under `function` for all `console` and
 
 - `type`: string, one of `["query", "mutation", "action", "http_action"]`
 - `path`: string, e.g. `"myDir/myFile:myFunction"`, or `"POST /my_endpoint"`
+- `runtime`: string, one of `["convex", "node"]`, the
+  [runtime](/functions/runtimes.mdx) the function ran in. Queries, mutations,
+  and HTTP actions always run in the Convex runtime. `null` for actions that
+  failed with a system error before starting.
 - `cached`: optional boolean, for queries this denotes whether this event came
   from a cached function execution
 - `request_id`: string, the
