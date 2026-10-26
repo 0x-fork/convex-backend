@@ -110,7 +110,7 @@ impl ExportStore {
         let credentials = Credentials::new(
             destination.access_key_id.clone(),
             destination.secret_access_key.clone(),
-            None,
+            destination.session_token.clone(),
             None,
             "convex-export",
         );

@@ -19,6 +19,7 @@ use iceberg::{
         S3_PATH_STYLE_ACCESS,
         S3_REGION,
         S3_SECRET_ACCESS_KEY,
+        S3_SESSION_TOKEN,
     },
     memory::{
         MemoryCatalogBuilder,
@@ -62,6 +63,8 @@ pub struct S3Destination {
     pub endpoint_url: Option<String>,
     pub access_key_id: String,
     pub secret_access_key: String,
+    /// Set when the keys are a role session rather than an IAM user's keys.
+    pub session_token: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -120,6 +123,9 @@ impl IcebergChangeWriter {
                 destination.secret_access_key,
             ),
         ]);
+        if let Some(token) = destination.session_token {
+            props.insert(S3_SESSION_TOKEN.to_owned(), token);
+        }
         if let Some(endpoint) = destination.endpoint_url {
             props.insert(S3_ENDPOINT.to_owned(), endpoint);
             props.insert(S3_PATH_STYLE_ACCESS.to_owned(), "true".to_owned());
