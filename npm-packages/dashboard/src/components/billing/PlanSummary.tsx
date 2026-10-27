@@ -18,6 +18,8 @@ import { useRouter } from "next/router";
 import { Donut } from "@ui/Donut";
 import { Loading } from "@ui/Loading";
 import { formatDistanceToNowStrict } from "date-fns";
+import type { UsagePricing } from "./lib/usagePrices";
+import { getUsageSpend, formatSpend } from "./lib/usageSpend";
 
 const BUSINESS_METRIC_TO_SECTION: Record<string, string> = {
   functionCalls: "functionCalls",
@@ -239,7 +241,8 @@ export function BusinessPlanSummary({
   entitlements,
   hasSubscription = false,
   showEntitlements = false,
-  pricingAvailableFromDate = null,
+  pricing = { status: "unavailable", reason: "unsupported-period" },
+  spendApplicable = true,
 }: {
   summary?: UsageSummaryRow[];
   error?: any;
@@ -249,11 +252,12 @@ export function BusinessPlanSummary({
   entitlements?: TeamEntitlementsResponse;
   hasSubscription?: boolean;
   showEntitlements?: boolean;
-  pricingAvailableFromDate?: number | null;
+  pricing?: UsagePricing;
+  spendApplicable?: boolean;
 }) {
   const router = useRouter();
   const { dashboardShowCashUsage } = useLaunchDarkly();
-  const showSpend = dashboardShowCashUsage && pricingAvailableFromDate !== null;
+  const showSpend = dashboardShowCashUsage && pricing.status !== "unavailable";
   const gridColumns = hasSubscription
     ? showSpend
       ? "grid-cols-[4fr_3fr_2fr_2fr_auto] sm:grid-cols-[4fr_3fr_3fr_2fr_auto]"
@@ -365,13 +369,16 @@ export function BusinessPlanSummary({
             </div>
           )}
           {showSpend && (
-            <Tooltip
-              tip={`Spend is only available for time ranges starting after the previous change to prices (${formatDistanceToNowStrict(pricingAvailableFromDate, { addSuffix: true })}).`}
-            >
-              <span className="flex items-center gap-1">
-                Spend <QuestionMarkCircledIcon />
-              </span>
-            </Tooltip>
+            <span className="flex items-center gap-1">
+              Spend
+              {pricing.status === "ready" && (
+                <Tooltip
+                  tip={`Spend is only available for time ranges starting after the previous change to prices (${formatDistanceToNowStrict(pricing.period.start, { addSuffix: true })}).`}
+                >
+                  <QuestionMarkCircledIcon />
+                </Tooltip>
+              )}
+            </span>
           )}
           <span className="invisible flex items-center gap-1 text-xs">
             <span className="hidden whitespace-nowrap sm:inline">
@@ -422,6 +429,15 @@ export function BusinessPlanSummary({
               includedAmount !== undefined
                 ? includedAmount
                 : metric;
+
+            const spend =
+              showSpend && pricing.status === "ready" && spendApplicable
+                ? section.metric === "aiGatewayCost"
+                  ? aiCostFailed || aiGatewayCost === undefined
+                    ? undefined
+                    : aiGatewayCost
+                  : getUsageSpend(summary, section.metric, pricing.period)
+                : undefined;
 
             return (
               <Button
@@ -519,7 +535,20 @@ export function BusinessPlanSummary({
                 )}
                 {showSpend && (
                   <div className="animate-fadeInFromLoading tabular-nums">
-                    <span className="text-content-secondary">–</span>
+                    {!spendApplicable ||
+                    section.metric === "deploymentCount" ? (
+                      <span className="text-content-secondary">–</span>
+                    ) : pricing.status === "error" || aiCostFailed ? (
+                      <span className="text-content-secondary">
+                        Unavailable
+                      </span>
+                    ) : pricing.status === "loading" || aiCostPending ? (
+                      <Loading fullHeight={false} className="h-4 w-16" />
+                    ) : spend === undefined ? (
+                      <span className="text-content-secondary">–</span>
+                    ) : (
+                      <span>{formatSpend(spend)}</span>
+                    )}
                   </div>
                 )}
                 <span className="flex items-center gap-1 text-xs text-content-secondary">

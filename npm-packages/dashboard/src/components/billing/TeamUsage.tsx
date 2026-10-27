@@ -13,7 +13,7 @@ import { NoPermissionMessage } from "elements/NoPermissionMessage";
 import { TEAM_RESOURCE } from "lib/permissions";
 import { useProjectById, useProjectBySlug } from "api/projects";
 import { useTeamOrbSubscription, useTeamPrices } from "api/billing";
-import { getUsagePricingPeriod } from "./lib/usagePrices";
+import { getUsagePricing } from "./lib/usagePrices";
 import groupBy from "lodash/groupBy";
 import sumBy from "lodash/sumBy";
 import { Period } from "elements/UsagePeriodSelector";
@@ -208,15 +208,14 @@ function TeamUsageContents({ team }: { team: TeamResponse }) {
       : null;
 
   const { subscription } = useTeamOrbSubscription(team?.id);
-  const { data: prices } = useTeamPrices(team.id);
+  const prices = useTeamPrices(team.id);
+  const pricing = getUsagePricing(prices, shownBillingPeriod);
 
   const isBusinessPlanType = subscription?.plan.planType === "CONVEX_BUSINESS";
 
   const billingPeriodRange = shownBillingPeriod
     ? { from: shownBillingPeriod.from, to: shownBillingPeriod.to }
     : null;
-
-  const pricingPeriod = getUsagePricingPeriod(prices, billingPeriodRange);
 
   const { data: aiGatewayCostByDay, error: aiGatewayCostError } =
     useAiGatewayCostPerDayByProject(
@@ -325,7 +324,10 @@ function TeamUsageContents({ team }: { team: TeamResponse }) {
                 <BusinessPlanSummary
                   summary={summary}
                   error={summaryError}
-                  pricingAvailableFromDate={pricingPeriod?.start ?? null}
+                  pricing={pricing}
+                  spendApplicable={
+                    !query.projectSlug && projectId === null && !componentPrefix
+                  }
                   aiGatewayCost={aiGatewayCost}
                   aiGatewayCostError={aiGatewayCostError}
                   isBusinessPlan={isBusinessPlanType}
