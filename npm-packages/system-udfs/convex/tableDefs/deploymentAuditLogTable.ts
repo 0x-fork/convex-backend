@@ -417,6 +417,7 @@ export const integrationAuditCredentialChanges = v.union(
   v.object({
     type: v.literal("s3Export"),
     access_key_id_changed: v.boolean(),
+    role_arn_changed: v.optional(v.boolean()),
     secret_access_key_changed: v.boolean(),
   }),
 );

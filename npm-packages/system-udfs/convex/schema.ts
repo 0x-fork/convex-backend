@@ -289,8 +289,11 @@ export const s3ExportConfig = v.object({
   bucket: v.string(),
   region: v.string(),
   prefix: v.optional(v.string()),
-  accessKeyId: v.string(),
-  secretAccessKey: v.string(),
+  accessKeyId: v.optional(v.string()),
+  secretAccessKey: v.optional(v.string()),
+  // Empty until the admin pastes the ARN from their CloudFormation stack.
+  roleArn: v.optional(v.string()),
+  roleExternalId: v.optional(v.string()),
   selection: syncSelection,
   period: syncPeriod,
 });

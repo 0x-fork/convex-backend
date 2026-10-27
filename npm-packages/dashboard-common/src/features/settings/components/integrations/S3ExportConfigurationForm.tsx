@@ -75,9 +75,171 @@ const bucketSchema = Yup.string()
 // The fields each step collects, in step order.
 const STEP_FIELDS = [
   ["bucket", "region", "prefix"],
-  ["accessKeyId", "secretAccessKey"],
+  ["accessKeyId", "secretAccessKey", "roleArn"],
   ["period"],
 ] as const;
+
+type CredentialMode = "role" | "accessKey";
+
+/**
+ * The same role the CloudFormation template creates, as Terraform for teams
+ * that keep AWS in their own repo. Mirrors
+ * ops/services/cloudformation/convex-integrations.yaml; change both together.
+ */
+export function terraformRole({
+  externalId,
+  bucket,
+  exportPath,
+  glueDatabase,
+  createBucket = false,
+}: {
+  externalId: string;
+  bucket: string;
+  exportPath: string;
+  glueDatabase: string;
+  /** Matches the template's `CreateBucket`: the snippet makes the bucket too. */
+  createBucket?: boolean;
+}) {
+  const convexAccount = CONVEX_S3_EXPORT_ROLE_ARN.split(":")[4];
+  const bucketResources = createBucket
+    ? `# Bucket for the export. Keep it if you remove Convex: it holds your data.
+resource "aws_s3_bucket" "convex_export" {
+  bucket = "${bucket}"
+}
+
+resource "aws_s3_bucket_public_access_block" "convex_export" {
+  bucket                  = aws_s3_bucket.convex_export.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "convex_export" {
+  bucket = aws_s3_bucket.convex_export.id
+  rule {
+    apply_server_side_encryption_by_default { sse_algorithm = "AES256" }
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "convex_export" {
+  bucket = aws_s3_bucket.convex_export.id
+  rule {
+    id     = "abort-incomplete-uploads"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload { days_after_initiation = 7 }
+  }
+}
+
+`
+    : "";
+  return `${bucketResources}# Role Convex assumes to write this deployment's data lake export.
+resource "aws_iam_role" "convex_export" {
+  name = "ConvexIntegrations-${externalId}"
+  path = "/convex/"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRole"
+      Principal = { AWS = "arn:aws:iam::${convexAccount}:root" }
+      Condition = {
+        StringEquals = { "sts:ExternalId" = "${externalId}" }
+        ArnEquals    = { "aws:PrincipalArn" = "${CONVEX_S3_EXPORT_ROLE_ARN}" }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "convex_export" {
+  role = aws_iam_role.convex_export.id
+  name = "data-lake"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "s3:GetBucketLocation"
+        Resource = "arn:aws:s3:::${bucket}"
+      },
+      {
+        Effect    = "Allow"
+        Action    = "s3:ListBucket"
+        Resource  = "arn:aws:s3:::${bucket}"
+        Condition = { StringLike = { "s3:prefix" = ["${exportPath}/*", "${exportPath}"] } }
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"]
+        Resource = "arn:aws:s3:::${bucket}/${exportPath}/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "glue:GetDatabase", "glue:CreateDatabase", "glue:GetTable", "glue:GetTables",
+          "glue:CreateTable", "glue:UpdateTable", "glue:DeleteTable",
+        ]
+        Resource = [
+          "arn:aws:glue:\${data.aws_region.current.name}:\${data.aws_caller_identity.current.account_id}:catalog",
+          "arn:aws:glue:\${data.aws_region.current.name}:\${data.aws_caller_identity.current.account_id}:database/${glueDatabase}",
+          "arn:aws:glue:\${data.aws_region.current.name}:\${data.aws_caller_identity.current.account_id}:table/${glueDatabase}/*",
+        ]
+      },
+    ]
+  })
+}
+
+data "aws_region" "current" {}
+data "aws_caller_identity" "current" {}
+
+# Paste this into the Convex dashboard.
+output "convex_export_role_arn" {
+  value = aws_iam_role.convex_export.arn
+}
+`;
+}
+
+// Where the dashboard sends the admin to create the customer-side role. Both
+// values come from ops/services/conductor/terraform and ops/vault/porter.tf.
+const CLOUDFORMATION_TEMPLATE_URL =
+  "https://convex-cloudformation-use1-prod.s3.us-east-1.amazonaws.com/convex-integrations/template.yaml";
+export const CONVEX_S3_EXPORT_ROLE_ARN =
+  "arn:aws:iam::715951115348:role/convex-s3-export-prod";
+
+/**
+ * CloudFormation quick-create link with every parameter filled in, so the
+ * admin only reviews and clicks Create stack.
+ */
+export function quickCreateUrl({
+  region,
+  externalId,
+  bucket,
+  exportPath,
+  glueDatabase,
+  createBucket = false,
+}: {
+  region: string;
+  externalId: string;
+  bucket: string;
+  /** `exportRoot(prefix, deploymentName)/data-lake`, the one path the role may touch. */
+  exportPath: string;
+  glueDatabase: string;
+  /** The stack creates `bucket` in `region` instead of using an existing one. */
+  createBucket?: boolean;
+}) {
+  const params = new URLSearchParams({
+    templateURL: CLOUDFORMATION_TEMPLATE_URL,
+    stackName: `ConvexIntegrations-${externalId.slice(0, 8)}`,
+    param_ExternalId: externalId,
+    param_BucketName: bucket,
+    param_ExportPath: exportPath,
+    param_ConvexRoleArn: CONVEX_S3_EXPORT_ROLE_ARN,
+    param_GlueDatabase: glueDatabase,
+    param_CreateBucket: String(createBucket),
+  });
+  return `https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}#/stacks/quickcreate?${params}`;
+}
 
 export function S3ExportConfigurationForm({
   onClose,
@@ -107,6 +269,15 @@ export function S3ExportConfigurationForm({
   const isNewIntegration = existingConfig === null || !logStreamId;
 
   const [showSecretAccessKey, setShowSecretAccessKey] = useState(false);
+  // A saved export keeps its credential type. A new one starts on the role
+  // path, which stores no secret.
+  const [credentialMode, setCredentialMode] = useState<CredentialMode>(
+    // A stored role export carries an empty access key ID, so the role fields
+    // decide.
+    existingConfig && existingConfig.roleExternalId === undefined
+      ? "accessKey"
+      : "role",
+  );
   const deploymentName = useDeploymentName();
 
   const validationSchema = useMemo(
@@ -116,17 +287,26 @@ export function S3ExportConfigurationForm({
         region: Yup.string().required("Region is required"),
         // IAM reads `*` and `?` as wildcards, which would widen the generated
         // policy beyond the export's directory.
+        // Mirrors `validate_s3_prefix` in crates/local_backend/src/log_sinks.rs.
         prefix: Yup.string().matches(
-          /^[^*?]*$/,
-          "Prefixes may not contain `*` or `?`",
+          /^[^*?$]*$/,
+          "Prefixes may not contain `*`, `?` or `$`",
         ),
-        accessKeyId: Yup.string().required("Access key ID is required"),
-        secretAccessKey: isNewIntegration
-          ? Yup.string().required("Secret access key is required")
-          : // Blank keeps the stored secret.
-            Yup.string(),
+        accessKeyId:
+          credentialMode === "accessKey"
+            ? Yup.string().required("Access key ID is required")
+            : Yup.string(),
+        secretAccessKey:
+          credentialMode === "accessKey" && isNewIntegration
+            ? Yup.string().required("Secret access key is required")
+            : // Blank keeps the stored secret.
+              Yup.string(),
+        roleArn: Yup.string().matches(
+          /^$|^arn:aws:iam::\d{12}:role\/.+$/,
+          "Role ARNs look like arn:aws:iam::123456789012:role/convex/ConvexIntegrations-…",
+        ),
       }),
-    [isNewIntegration],
+    [isNewIntegration, credentialMode],
   );
 
   const formState = useFormik<{
@@ -135,6 +315,7 @@ export function S3ExportConfigurationForm({
     prefix: string;
     accessKeyId: string;
     secretAccessKey: string;
+    roleArn: string;
     period: SyncPeriod;
     selection: SyncSelection;
   }>({
@@ -144,6 +325,7 @@ export function S3ExportConfigurationForm({
       prefix: existingConfig?.prefix ?? "",
       accessKeyId: existingConfig?.accessKeyId ?? "",
       secretAccessKey: "",
+      roleArn: existingConfig?.roleArn ?? "",
       period: existingConfig?.period ?? "daily",
       selection: initialSelection,
     },
@@ -157,31 +339,53 @@ export function S3ExportConfigurationForm({
           bucket: values.bucket,
           region: values.region,
           prefix: values.prefix || null,
-          accessKeyId: values.accessKeyId,
           period: values.period,
           // OpenAPI's flattened map type cannot represent the `_other` default.
           ...(selection ? { selection: selection as Selection } : {}),
         };
 
-        if (isNewIntegration) {
+        if (isNewIntegration && credentialMode === "role") {
+          // The export is created without its ARN so the backend can hand
+          // back the ExternalId the CloudFormation stack needs.
           await createLogStream({
             logStreamType: "s3Export",
             ...config,
+            roleArn: "",
+          });
+          onAddedIntegration?.();
+          toast("success", "Export created. Open it to finish the AWS setup.");
+        } else if (isNewIntegration) {
+          await createLogStream({
+            logStreamType: "s3Export",
+            ...config,
+            accessKeyId: values.accessKeyId,
             secretAccessKey: values.secretAccessKey,
           });
           onAddedIntegration?.();
           toast("success", "Export saved. The first sync is starting.");
         } else {
-          // Omitting the secret keeps the one already stored.
+          // Omitting the secret keeps the one already stored; omitting the
+          // ARN keeps the one already pasted.
           await updateLogStream(logStreamId, {
             logStreamType: "s3Export",
             period: values.period,
             ...(selection ? { selection: selection as Selection } : {}),
-            ...(values.secretAccessKey
+            ...(credentialMode === "accessKey" && values.secretAccessKey
               ? { secretAccessKey: values.secretAccessKey }
               : {}),
+            ...(credentialMode === "role" &&
+            values.roleArn !== existingConfig.roleArn
+              ? { roleArn: values.roleArn }
+              : {}),
           });
-          toast("success", "Export updated.");
+          toast(
+            "success",
+            credentialMode === "role" &&
+              existingConfig.roleArn === "" &&
+              values.roleArn !== ""
+              ? "Role saved. The first sync is starting."
+              : "Export updated.",
+          );
         }
         onClose();
       } catch (e) {
@@ -321,70 +525,131 @@ export function S3ExportConfigurationForm({
             {continueButton(0)}
           </Stepper.Step>
           <Stepper.Step label="AWS access">
-            <PolicyActions
-              policy={policy}
-              disabledReason={destinationError}
-              destinationChanged={destinationChanged}
-              onCopied={() => setCopiedPolicy(policy)}
-            >
-              <ol className="flex list-[lower-alpha] flex-col gap-1 pl-4 text-xs text-content-secondary">
-                <li>
-                  In the bucket's AWS account,{" "}
-                  <Link
-                    href="https://console.aws.amazon.com/iam/home#/users/create"
-                    target="_blank"
+            {isNewIntegration && (
+              <div
+                role="radiogroup"
+                aria-label="AWS access method"
+                className="flex gap-2"
+              >
+                {(
+                  [
+                    ["role", "IAM role (recommended)"],
+                    ["accessKey", "Access keys"],
+                  ] as const
+                ).map(([mode, label]) => (
+                  <Button
+                    key={mode}
+                    role="radio"
+                    aria-checked={credentialMode === mode}
+                    variant={credentialMode === mode ? "primary" : "neutral"}
+                    size="sm"
+                    onClick={() => setCredentialMode(mode)}
                   >
-                    create an IAM user
-                  </Link>
-                  .
-                </li>
-                <li>
-                  Open the user, then choose Add permissions, Create inline
-                  policy, and JSON. Paste this policy and save it.
-                </li>
-                <li>
-                  Under Security credentials, create an access key for an
-                  application running outside AWS. Copy both values: AWS shows
-                  the secret only once.
-                </li>
-              </ol>
-            </PolicyActions>
-            <TextInput
-              value={formState.values.accessKeyId}
-              onChange={formState.handleChange}
-              label="Access Key ID"
-              placeholder="AKIAIOSFODNN7EXAMPLE"
-              id="accessKeyId"
-              error={fieldError("accessKeyId")}
-              onBlur={formState.handleBlur}
-              disabled={destinationFixed}
-              description={
-                destinationFixed ? destinationFixedDescription : undefined
-              }
-            />
-            <TextInput
-              value={formState.values.secretAccessKey}
-              onChange={formState.handleChange}
-              type={showSecretAccessKey ? "text" : "password"}
-              label={
-                isNewIntegration
-                  ? "Secret Access Key"
-                  : "Secret Access Key (stored)"
-              }
-              id="secretAccessKey"
-              className="max-w-full"
-              placeholder={isNewIntegration ? undefined : "Leave blank to keep"}
-              action={() => setShowSecretAccessKey(!showSecretAccessKey)}
-              Icon={showSecretAccessKey ? EyeNoneIcon : EyeOpenIcon}
-              iconTooltip={
-                showSecretAccessKey
-                  ? "Hide secret access key"
-                  : "Show secret access key"
-              }
-              error={fieldError("secretAccessKey")}
-              onBlur={formState.handleBlur}
-              description="Permissions can take a minute to apply. Convex retries automatically."
-            />
+                    {label}
+                  </Button>
+                ))}
+              </div>
+            )}
+            {credentialMode === "role" && isNewIntegration && (
+              <p className="text-xs text-content-secondary">
+                Save to create the export. Then open it to launch a
+                CloudFormation stack in the bucket's AWS account and paste the
+                role ARN it outputs. Convex stores no access keys.
+              </p>
+            )}
+            {credentialMode === "role" && !isNewIntegration && (
+              <>
+                <RoleSetup
+                  role={{
+                    externalId: existingConfig.roleExternalId ?? "",
+                    bucket,
+                    exportPath: `${exportRoot(prefix, deploymentName)}/data-lake`,
+                    glueDatabase: glueDatabaseName(deploymentName),
+                  }}
+                  region={region}
+                />
+                <TextInput
+                  value={formState.values.roleArn}
+                  onChange={formState.handleChange}
+                  label="Role ARN"
+                  id="roleArn"
+                  placeholder="arn:aws:iam::123456789012:role/convex/ConvexIntegrations-…"
+                  error={fieldError("roleArn")}
+                  onBlur={formState.handleBlur}
+                  description="From the stack's Outputs tab. The first sync starts once it is saved."
+                />
+              </>
+            )}
+            {credentialMode === "accessKey" && (
+              <>
+                <PolicyActions
+                  policy={policy}
+                  disabledReason={destinationError}
+                  destinationChanged={destinationChanged}
+                  onCopied={() => setCopiedPolicy(policy)}
+                >
+                  <ol className="flex list-[lower-alpha] flex-col gap-1 pl-4 text-xs text-content-secondary">
+                    <li>
+                      In the bucket's AWS account,{" "}
+                      <Link
+                        href="https://console.aws.amazon.com/iam/home#/users/create"
+                        target="_blank"
+                      >
+                        create an IAM user
+                      </Link>
+                      .
+                    </li>
+                    <li>
+                      Open the user, then choose Add permissions, Create inline
+                      policy, and JSON. Paste this policy and save it.
+                    </li>
+                    <li>
+                      Under Security credentials, create an access key for an
+                      application running outside AWS. Copy both values: AWS
+                      shows the secret only once.
+                    </li>
+                  </ol>
+                </PolicyActions>
+                <TextInput
+                  value={formState.values.accessKeyId}
+                  onChange={formState.handleChange}
+                  label="Access Key ID"
+                  placeholder="AKIAIOSFODNN7EXAMPLE"
+                  id="accessKeyId"
+                  error={fieldError("accessKeyId")}
+                  onBlur={formState.handleBlur}
+                  disabled={destinationFixed}
+                  description={
+                    destinationFixed ? destinationFixedDescription : undefined
+                  }
+                />
+                <TextInput
+                  value={formState.values.secretAccessKey}
+                  onChange={formState.handleChange}
+                  type={showSecretAccessKey ? "text" : "password"}
+                  label={
+                    isNewIntegration
+                      ? "Secret Access Key"
+                      : "Secret Access Key (stored)"
+                  }
+                  id="secretAccessKey"
+                  className="max-w-full"
+                  placeholder={
+                    isNewIntegration ? undefined : "Leave blank to keep"
+                  }
+                  action={() => setShowSecretAccessKey(!showSecretAccessKey)}
+                  Icon={showSecretAccessKey ? EyeNoneIcon : EyeOpenIcon}
+                  iconTooltip={
+                    showSecretAccessKey
+                      ? "Hide secret access key"
+                      : "Show secret access key"
+                  }
+                  error={fieldError("secretAccessKey")}
+                  onBlur={formState.handleBlur}
+                  description="Permissions can take a minute to apply. Convex retries automatically."
+                />
+              </>
+            )}
             {continueButton(1)}
           </Stepper.Step>
           <Stepper.Step label="Sync settings">
@@ -494,6 +759,80 @@ export function S3ExportConfigurationForm({
         </Button>
       </div>
     </form>
+  );
+}
+
+function RoleSetup({
+  role,
+  region,
+}: {
+  role: Parameters<typeof terraformRole>[0];
+  region: string;
+}) {
+  const { externalId } = role;
+  const terraform = terraformRole(role);
+  return (
+    <>
+      <ol className="flex list-[lower-alpha] flex-col gap-1 pl-4 text-xs text-content-secondary">
+        <li>
+          Open AWS below. CloudFormation opens with the External ID, bucket and
+          export path filled in.
+        </li>
+        <li>
+          Tick the IAM acknowledgement and choose Create stack. It takes one to
+          two minutes.
+        </li>
+        <li>
+          On the stack's Outputs tab, copy <code>RoleArn</code> and paste it
+          here.
+        </li>
+      </ol>
+      <div className="flex flex-col gap-1">
+        <TextInput
+          value={externalId}
+          onChange={() => {}}
+          label="External ID"
+          id="externalId"
+          disabled
+          description="Generated by Convex for this export. The stack's trust policy requires it."
+        />
+        <CopyButton text={externalId} label="Copy External ID" size="sm" />
+      </div>
+      <Button
+        href={quickCreateUrl({ region, ...role })}
+        target="_blank"
+        variant="neutral"
+        size="sm"
+        className="self-start"
+      >
+        Open in AWS
+      </Button>
+      <Disclosure as="div" className="flex flex-col gap-2">
+        <DisclosureButton
+          as={Button}
+          variant="neutral"
+          size="sm"
+          className="self-start"
+        >
+          {({ open }) => (
+            <>
+              {open ? "Hide Terraform" : "Using Terraform or another IaC tool?"}
+            </>
+          )}
+        </DisclosureButton>
+        <DisclosurePanel className="flex flex-col gap-2">
+          <p className="text-xs text-content-secondary">
+            Add this to your Terraform instead of running the stack. It creates
+            the same role. Apply it, then paste the{" "}
+            <code>convex_export_role_arn</code> output below.
+          </p>
+          <CopyButton text={terraform} label="Copy Terraform" size="sm" />
+          <pre className="scrollbar max-h-64 overflow-auto rounded-sm border bg-background-tertiary p-2 font-mono text-xs">
+            {terraform}
+          </pre>
+        </DisclosurePanel>
+      </Disclosure>
+    </>
   );
 }
 

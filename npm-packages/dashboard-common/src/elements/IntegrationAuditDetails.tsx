@@ -133,6 +133,7 @@ function sensitiveChanges(changes?: CredentialChanges): string[] {
       fields = [
         ["AWS access key ID", changes.access_key_id_changed],
         ["AWS secret access key", changes.secret_access_key_changed],
+        ["AWS role ARN", changes.role_arn_changed ?? false],
       ];
       break;
     default:
