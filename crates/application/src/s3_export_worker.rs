@@ -17,6 +17,7 @@ use common::{
     RequestId,
 };
 use database::Database;
+use errors::ErrorMetadataAnyhowExt;
 use exports::interface::ExportProvider;
 use fastrace::future::FutureExt as _;
 use keybroker::Identity;
@@ -29,6 +30,7 @@ use model::{
             },
             LogSinksRow,
             SinkConfig,
+            SinkState,
             SinkType,
         },
         LogSinksModel,
@@ -181,9 +183,25 @@ impl<RT: Runtime> S3ExportWorker<RT> {
                     &export.developer_id().to_string(),
                 )
                 .in_span(span)
-                .await?;
+                .await;
             timer.finish();
-            page
+            match page {
+                Ok(page) => page,
+                // A user error from the destination is the customer's to fix,
+                // so the export shows it. The worker keeps retrying, and the
+                // next page that lands marks the export active again.
+                Err(error) if error.is_bad_request() => {
+                    self.set_status(
+                        &export,
+                        SinkState::Failed {
+                            reason: error.user_facing_message(),
+                        },
+                    )
+                    .await?;
+                    return Err(error);
+                },
+                Err(error) => return Err(error),
+            }
         };
         // Porter commits the page in the destination before returning it, so
         // a returned page is a billed page. The progress checkpoint below is
@@ -229,6 +247,8 @@ impl<RT: Runtime> S3ExportWorker<RT> {
         } else {
             drop(tx);
         }
+        // After the checkpoint commit, which reads this document.
+        self.set_status(&export, SinkState::Active).await?;
         let interval = sync_interval(config.period);
         self.gauges.set_next_sync_due(next_sync_due(
             &page.status,
@@ -273,6 +293,31 @@ impl<RT: Runtime> S3ExportWorker<RT> {
                 },
             }
         }
+        Ok(())
+    }
+
+    /// Sets the export's status unless it already has it, or the export
+    /// changed since `export` was read.
+    async fn set_status(
+        &self,
+        export: &ParsedDocument<LogSinksRow>,
+        status: SinkState,
+    ) -> anyhow::Result<()> {
+        if export.status == status {
+            return Ok(());
+        }
+        let mut tx = self.database.begin(Identity::system()).await?;
+        let mut model = LogSinksModel::new(&mut tx);
+        let current = model.get_by_provider(SinkType::S3Export).await?;
+        if !is_same_export(current.as_ref(), export)
+            || current.is_some_and(|current| current.status == status)
+        {
+            return Ok(());
+        }
+        model.patch_status(export.developer_id(), status).await?;
+        self.database
+            .commit_with_write_source(tx, "s3_export_worker_set_status")
+            .await?;
         Ok(())
     }
 }

@@ -24,10 +24,14 @@ use aws_sdk_glue::types::{
 };
 use aws_sdk_s3::{
     config::{
+        http::HttpResponse,
         BehaviorVersion,
         Region,
     },
-    error::SdkError,
+    error::{
+        ProvideErrorMetadata,
+        SdkError,
+    },
     primitives::ByteStream,
 };
 use errors::ErrorMetadata;
@@ -151,7 +155,7 @@ impl ExportStore {
             Err(error) if error.as_service_error().is_some_and(|e| e.is_no_such_key()) => {
                 return Ok(None);
             },
-            Err(error) => return Err(error).context("Cannot read the export state"),
+            Err(error) => return Err(aws_error(error, "read the export state")),
         };
         let etag = output.e_tag.clone().context("Export state has no ETag")?;
         let bytes = output.body.collect().await?.into_bytes();
@@ -186,7 +190,7 @@ impl ExportStore {
                     "Another writer changed the export state",
                 ))
             },
-            Err(error) => Err(error).context("Cannot write the export state"),
+            Err(error) => Err(aws_error(error, "write the export state")),
         }
     }
 
@@ -204,7 +208,8 @@ impl ExportStore {
             .into_paginator()
             .send();
         while let Some(page) = pages.next().await {
-            for table in page.context("Cannot list Glue tables")?.table_list() {
+            let page = page.map_err(|e| aws_error(e, "list the Glue tables"))?;
+            for table in page.table_list() {
                 published.insert(table.name().to_owned(), table.clone());
             }
         }
@@ -216,7 +221,7 @@ impl ExportStore {
                     .table_input(table_input(name, location, None, state)?)
                     .send()
                     .await
-                    .context("Cannot create a Glue table")?;
+                    .map_err(|e| aws_error(e, "create a Glue table"))?;
                 continue;
             };
             let parameters = current.parameters.unwrap_or_default();
@@ -234,7 +239,10 @@ impl ExportStore {
             if let Some(version_id) = current.version_id {
                 update = update.version_id(version_id);
             }
-            update.send().await.context("Cannot update a Glue table")?;
+            update
+                .send()
+                .await
+                .map_err(|e| aws_error(e, "update a Glue table"))?;
         }
         for (name, table) in published {
             if table.parameters().is_some_and(|p| state.published(p)) {
@@ -246,7 +254,7 @@ impl ExportStore {
                 .name(name)
                 .send()
                 .await
-                .context("Cannot drop a Glue table")?;
+                .map_err(|e| aws_error(e, "drop a Glue table"))?;
         }
         Ok(())
     }
@@ -267,8 +275,41 @@ impl ExportStore {
             {
                 Ok(())
             },
-            Err(error) => Err(error).context("Cannot create the Glue database"),
+            Err(error) => Err(aws_error(error, "create the Glue database")),
         }
+    }
+}
+
+/// AWS error codes that mean the customer's bucket, role or region is set up
+/// wrong. Retrying does not fix them; the customer has to.
+const DESTINATION_ERROR_CODES: &[&str] = &[
+    "AccessDenied",
+    "AccessDeniedException",
+    "AuthorizationHeaderMalformed",
+    "NoSuchBucket",
+    "PermanentRedirect",
+];
+
+/// Wraps an S3 or Glue error. An error the customer must fix in AWS becomes a
+/// user error, so the export shows it instead of retrying silently.
+fn aws_error<E>(error: SdkError<E, HttpResponse>, action: &str) -> anyhow::Error
+where
+    E: ProvideErrorMetadata + std::error::Error + Send + Sync + 'static,
+{
+    let code = error.code().map(str::to_owned);
+    let detail = error.message().map(str::to_owned);
+    let error = anyhow::Error::new(error).context(format!("Cannot {action}"));
+    match code {
+        Some(code) if DESTINATION_ERROR_CODES.contains(&code.as_str()) => {
+            error.context(ErrorMetadata::bad_request(
+                "S3ExportDestinationError",
+                format!(
+                    "AWS did not let Convex {action}: {code}{}",
+                    detail.map(|d| format!(" ({d})")).unwrap_or_default()
+                ),
+            ))
+        },
+        _ => error,
     }
 }
 

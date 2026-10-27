@@ -102,6 +102,21 @@ impl<RT: Runtime> Application<RT> {
         id: &String,
         config: SinkConfig,
     ) -> anyhow::Result<()> {
+        self.patch_log_sink_config_and_status(identity, request_metadata, id, config, false)
+            .await
+    }
+
+    /// Like `patch_log_sink_config`, and with `reset_to_pending` also sets the
+    /// status to Pending in the same transaction, so no status written for the
+    /// old config can land after the new config.
+    pub async fn patch_log_sink_config_and_status(
+        &self,
+        identity: Identity,
+        request_metadata: RequestMetadata,
+        id: &String,
+        config: SinkConfig,
+        reset_to_pending: bool,
+    ) -> anyhow::Result<()> {
         let sink_type = config.sink_type().as_str().to_string();
         let developer_id = DeveloperDocumentId::decode(id).map_err(|_| {
             anyhow::anyhow!(ErrorMetadata::bad_request(
@@ -124,6 +139,9 @@ impl<RT: Runtime> Application<RT> {
                     let current = audit_config(&config);
                     let credential_changes = audit_credential_changes(&previous_config, &config);
                     model.patch_config(developer_id, config).await?;
+                    if reset_to_pending {
+                        model.patch_status(developer_id, SinkState::Pending).await?;
+                    }
                     Ok((
                         (),
                         vec![DeploymentAuditLogEvent::UpdateIntegration {

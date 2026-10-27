@@ -1701,15 +1701,21 @@ pub async fn update_log_stream(
                 ..existing_config.clone()
             };
             let config = ensure_same_s3_destination(&existing_config, config)?;
-
+            // The S3 export worker, not the log manager, sets this status: a
+            // failure stays Failed until a page lands. New credentials start
+            // over at Pending; other edits keep the status, so a tables-only
+            // edit cannot hide a failure.
+            let credentials_changed = config.credentials != existing_config.credentials;
             st.application
-                .patch_log_sink_config(
+                .patch_log_sink_config_and_status(
                     identity.clone(),
                     request_metadata.clone(),
                     &id,
                     SinkConfig::S3Export(config),
+                    credentials_changed,
                 )
                 .await?;
+            return Ok(StatusCode::OK);
         },
         _ => {
             return Err(anyhow::anyhow!(ErrorMetadata::bad_request(

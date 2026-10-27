@@ -291,6 +291,12 @@ export function S3ExportConfigurationForm({
     existingConfig !== null && existingConfig.roleExternalId === undefined;
   const stepFields = usesAccessKeys ? ACCESS_KEY_STEP_FIELDS : ROLE_STEP_FIELDS;
   const awaitingRole = !usesAccessKeys && existingConfig?.roleArn === "";
+  // The worker records why AWS refused the export, e.g. a role it cannot
+  // assume. For a role export that is almost always fixed on Connect AWS.
+  const failure =
+    !usesAccessKeys && integration.existing?.status.type === "failed"
+      ? integration.existing.status.reason
+      : undefined;
   const deploymentName = useDeploymentName();
   // Whether the stack creates the bucket. Follows the bucket choice while
   // adding; on a reopened export the choice is gone, so it starts on: a
@@ -472,7 +478,7 @@ export function S3ExportConfigurationForm({
   // the admin is most likely headed: Connect AWS while the role is missing,
   // otherwise its sync settings.
   const [activeStep, setActiveStep] = useState(
-    isNewIntegration ? 0 : awaitingRole ? 1 : 2,
+    isNewIntegration ? 0 : awaitingRole || failure !== undefined ? 1 : 2,
   );
   const continueButton = (
     step: number,
@@ -718,7 +724,10 @@ export function S3ExportConfigurationForm({
                     role={{
                       externalId: existingConfig.roleExternalId ?? "",
                       bucket,
-                      exportPath: `${exportRoot(prefix, deploymentName)}/data-lake`,
+                      exportPath: `${exportRoot(
+                        prefix,
+                        deploymentName,
+                      )}/data-lake`,
                       glueDatabase: glueDatabaseName(deploymentName),
                       createBucket,
                     }}
@@ -739,7 +748,7 @@ export function S3ExportConfigurationForm({
                     label="Role ARN"
                     id="roleArn"
                     placeholder="arn:aws:iam::123456789012:role/convex/ConvexIntegrations-…"
-                    error={fieldError("roleArn")}
+                    error={fieldError("roleArn") ?? failure}
                     onBlur={formState.handleBlur}
                     description="From the stack's Outputs tab."
                   />
