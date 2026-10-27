@@ -80,7 +80,6 @@
     "npm-packages/private-demos/tanstack-start-workos",
     // Docs that we sync over to fivetran
     "crates/fivetran_source/docs/",
-    "crates/fivetran_destination/docs/",
     // Gets modified by tshy
     "npm-packages/private-demos/convex_ratelimiter/package.json",
     // Codegen for WASM tests

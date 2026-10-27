@@ -14,7 +14,6 @@ testing = [
     "database/testing",
     "errors/testing",
     "events/testing",
-    "fivetran_destination/testing",
     "function_runner/testing",
     "indexing/testing",
     "isolate/testing",
@@ -66,7 +65,6 @@ events = { workspace = true }
 exports = { workspace = true }
 fastrace = { workspace = true }
 file_storage = { workspace = true }
-fivetran_destination = { workspace = true }
 function_runner = { workspace = true }
 futures = { workspace = true }
 futures-async-stream = { workspace = true }
@@ -134,7 +132,6 @@ database = { workspace = true, features = ["testing"] }
 errors = { workspace = true, features = ["testing"] }
 events = { workspace = true, features = ["testing"] }
 exports = { workspace = true, features = ["testing"] }
-fivetran_destination = { workspace = true, features = ["testing"] }
 function_runner = { workspace = true, features = ["testing"] }
 indexing = { workspace = true, features = ["testing"] }
 isolate = { workspace = true, features = ["testing"] }

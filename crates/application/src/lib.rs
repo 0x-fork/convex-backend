@@ -191,13 +191,6 @@ use file_storage::{
     FileStorage,
     FileStream,
 };
-use fivetran_destination::{
-    api_types::{
-        BatchWriteRow,
-        DeleteType,
-    },
-    constants::FIVETRAN_PRIMARY_KEY_INDEX_DESCRIPTOR,
-};
 use function_runner::FunctionRunner;
 use futures::stream::BoxStream;
 use headers::{
@@ -288,7 +281,12 @@ use model::{
         FileStorageId,
         FileStorageModel,
     },
-    fivetran_import::FivetranImportModel,
+    fivetran_import::{
+        constants::FIVETRAN_PRIMARY_KEY_INDEX_DESCRIPTOR,
+        BatchWriteRow,
+        DeleteType,
+        FivetranImportModel,
+    },
     migrations::MigrationWorker,
     modules::{
         module_versions::{

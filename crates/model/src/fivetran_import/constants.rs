@@ -10,25 +10,13 @@ use common::{
     },
 };
 
-use crate::api_types::FivetranFieldName;
-
 /// The name of the field used in Convex tables to store the Fivetran metadata.
 pub const METADATA_CONVEX_FIELD_NAME: IdentifierFieldName =
     IdentifierFieldName::const_new("fivetran");
 
-pub static SYNCED_FIVETRAN_FIELD_NAME: LazyLock<FivetranFieldName> =
-    LazyLock::new(|| "_fivetran_synced".parse().unwrap());
-pub static SOFT_DELETE_FIVETRAN_FIELD_NAME: LazyLock<FivetranFieldName> =
-    LazyLock::new(|| "_fivetran_deleted".parse().unwrap());
-pub static ID_FIVETRAN_FIELD_NAME: LazyLock<FivetranFieldName> =
-    LazyLock::new(|| "_fivetran_id".parse().unwrap());
-
 pub const SYNCED_CONVEX_FIELD_NAME: IdentifierFieldName = IdentifierFieldName::const_new("synced");
 pub const SOFT_DELETE_CONVEX_FIELD_NAME: IdentifierFieldName =
     IdentifierFieldName::const_new("deleted");
-pub const ID_CONVEX_FIELD_NAME: IdentifierFieldName = IdentifierFieldName::const_new("id");
-pub const UNDERSCORED_COLUMNS_CONVEX_FIELD_NAME: IdentifierFieldName =
-    IdentifierFieldName::const_new("columns");
 
 pub static SOFT_DELETE_FIELD_PATH: LazyLock<FieldPath> = LazyLock::new(|| {
     FieldPath::new(vec![
@@ -42,14 +30,6 @@ pub static SYNCED_FIELD_PATH: LazyLock<FieldPath> = LazyLock::new(|| {
     FieldPath::new(vec![
         METADATA_CONVEX_FIELD_NAME.clone(),
         SYNCED_CONVEX_FIELD_NAME.clone(),
-    ])
-    .expect("Invalid field path")
-});
-
-pub static ID_FIELD_PATH: LazyLock<FieldPath> = LazyLock::new(|| {
-    FieldPath::new(vec![
-        METADATA_CONVEX_FIELD_NAME.clone(),
-        ID_CONVEX_FIELD_NAME.clone(),
     ])
     .expect("Invalid field path")
 });
