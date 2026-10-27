@@ -7240,8 +7240,8 @@ dependencies = [
 
 [[package]]
 name = "moka"
-version = "0.12.15"
-source = "git+https://github.com/convex/moka?rev=abd1f71cfe4bd4ee21ffd772ed33ce9f9329fe04#abd1f71cfe4bd4ee21ffd772ed33ce9f9329fe04"
+version = "0.12.16"
+source = "git+https://github.com/convex/moka?rev=ef75713ad43a39fae18c3c01fa414eefa9439af0#ef75713ad43a39fae18c3c01fa414eefa9439af0"
 dependencies = [
  "async-lock",
  "crossbeam-channel",
