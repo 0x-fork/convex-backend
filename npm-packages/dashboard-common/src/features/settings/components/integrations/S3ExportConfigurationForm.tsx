@@ -11,6 +11,7 @@ import { Link } from "@ui/Link";
 import { TextInput } from "@ui/TextInput";
 import { Combobox, Option } from "@ui/Combobox";
 import { Stepper } from "@ui/Stepper";
+import { SegmentedControl } from "@ui/SegmentedControl";
 import {
   Disclosure,
   DisclosureButton,
@@ -21,6 +22,7 @@ import {
   ChevronUpIcon,
   EyeNoneIcon,
   EyeOpenIcon,
+  ExternalLinkIcon,
 } from "@radix-ui/react-icons";
 import { useFormik } from "formik";
 import { useContext, useMemo, useState } from "react";
@@ -203,7 +205,7 @@ resource "aws_iam_role_policy" "convex_export" {
 data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}
 
-# Paste this into the Convex dashboard.
+# Paste this, or your AWS account ID, into the Convex dashboard.
 output "convex_export_role_arn" {
   value = aws_iam_role.convex_export.arn
 }
@@ -251,6 +253,37 @@ export function quickCreateUrl({
   return `https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}#/stacks/quickcreate?${params}`;
 }
 
+/**
+ * The role an export's stack creates is named after its External ID, so the
+ * customer's AWS account ID is the only part Convex doesn't know. Accepts the
+ * account ID, or any ARN from the customer's account (the stack's ARN, or
+ * `RoleArn` itself), and returns `undefined` for anything else. Porter may
+ * only assume `role/convex/ConvexIntegrations-*`, so no other role name works.
+ */
+export function roleArnFor(input: string, externalId: string) {
+  const value = input.trim();
+  const roleArn = (account: string) =>
+    `arn:aws:iam::${account}:role/convex/ConvexIntegrations-${externalId}`;
+  // The AWS account menu shows IDs as 1234-5678-9012.
+  const digits = value.replace(/[\s-]/g, "");
+  if (/^\d{12}$/.test(digits)) {
+    return roleArn(digits);
+  }
+  const arn = value.match(/^arn:aws:([a-z0-9-]+):[a-z0-9-]*:(\d{12}):(.*)$/);
+  if (!arn) {
+    return undefined;
+  }
+  const [, service, account, resource] = arn;
+  if (
+    service === "iam" &&
+    resource.startsWith("role/") &&
+    value !== roleArn(account)
+  ) {
+    return undefined;
+  }
+  return roleArn(account);
+}
+
 export function S3ExportConfigurationForm({
   onClose,
   integration,
@@ -293,6 +326,7 @@ export function S3ExportConfigurationForm({
   const awaitingRole = !usesAccessKeys && existingConfig?.roleArn === "";
   // The worker records why AWS refused the export, e.g. a role it cannot
   // assume. For a role export that is almost always fixed on Connect AWS.
+  const externalId = existingConfig?.roleExternalId ?? "";
   const failure =
     !usesAccessKeys && integration.existing?.status.type === "failed"
       ? integration.existing.status.reason
@@ -330,15 +364,30 @@ export function S3ExportConfigurationForm({
               Yup.string(),
         roleArn: (!usesAccessKeys && !isNewIntegration
           ? Yup.string().required(
-              "Paste the role ARN from the stack's Outputs tab",
+              "Paste your AWS account ID or the stack's ARN",
             )
           : Yup.string()
-        ).matches(
-          /^$|^arn:aws:iam::\d{12}:role\/.+$/,
-          "Role ARNs look like arn:aws:iam::123456789012:role/convex/ConvexIntegrations-…",
-        ),
+        )
+          .test(
+            "partition",
+            "S3 export supports commercial AWS regions only",
+            (value) => !value || !/^arn:aws-(cn|us-gov):/.test(value.trim()),
+          )
+          .test(
+            "role",
+            `Convex can only use the role convex/ConvexIntegrations-${externalId}. Paste your AWS account ID instead.`,
+            (value) =>
+              !value ||
+              !/^arn:aws:iam::\d{12}:role\//.test(value.trim()) ||
+              roleArnFor(value, externalId) !== undefined,
+          )
+          .test(
+            "account",
+            "Paste a 12-digit AWS account ID, or an ARN from that account",
+            (value) => !value || roleArnFor(value, externalId) !== undefined,
+          ),
       }),
-    [isNewIntegration, usesAccessKeys],
+    [externalId, isNewIntegration, usesAccessKeys],
   );
 
   const formState = useFormik<{
@@ -361,7 +410,8 @@ export function S3ExportConfigurationForm({
       prefix: existingConfig?.prefix ?? "",
       accessKeyId: existingConfig?.accessKeyId ?? "",
       secretAccessKey: "",
-      roleArn: existingConfig?.roleArn ?? "",
+      // Saved role ARNs differ only in the account, so show just that.
+      roleArn: existingConfig?.roleArn?.split(":")[4] ?? "",
       period: existingConfig?.period ?? "daily",
       selection: initialSelection,
     },
@@ -392,6 +442,7 @@ export function S3ExportConfigurationForm({
         } else {
           // Omitting the secret keeps the one already stored; omitting the
           // ARN keeps the one already pasted.
+          const roleArn = roleArnFor(values.roleArn, externalId) ?? "";
           await updateLogStream(logStreamId, {
             logStreamType: "s3Export",
             period: values.period,
@@ -399,8 +450,8 @@ export function S3ExportConfigurationForm({
             ...(usesAccessKeys && values.secretAccessKey
               ? { secretAccessKey: values.secretAccessKey }
               : {}),
-            ...(!usesAccessKeys && values.roleArn !== existingConfig.roleArn
-              ? { roleArn: values.roleArn }
+            ...(!usesAccessKeys && roleArn !== existingConfig.roleArn
+              ? { roleArn }
               : {}),
           });
           toast(
@@ -509,8 +560,10 @@ export function S3ExportConfigurationForm({
   // Until the role is connected, the steps run in order and only the last one
   // saves, so the ARN reaches the backend together with the sync settings.
   const pending = !usesAccessKeys && (isNewIntegration || awaitingRole);
+  const resolvedRoleArn = roleArnFor(formState.values.roleArn, externalId);
   const roleArnChanged =
-    formState.values.roleArn !== (existingConfig?.roleArn ?? "");
+    (resolvedRoleArn ?? formState.values.roleArn) !==
+    (existingConfig?.roleArn ?? "");
   // Match the destination fields enforced by `ensure_same_s3_destination`.
   const destinationFixed = !isNewIntegration;
   const destinationFixedDescription =
@@ -720,9 +773,23 @@ export function S3ExportConfigurationForm({
                 </p>
               ) : (
                 <>
+                  {!createdHere && (
+                    <div className="flex flex-col gap-1">
+                      <label className="flex items-center gap-2 text-sm">
+                        <Checkbox
+                          checked={createBucket}
+                          onChange={() => setCreateBucket(!createBucket)}
+                        />
+                        Create the bucket <code>{bucket}</code>
+                      </label>
+                      <p className="pl-6 text-xs text-content-secondary">
+                        Turn this off if the bucket already exists.
+                      </p>
+                    </div>
+                  )}
                   <RoleSetup
                     role={{
-                      externalId: existingConfig.roleExternalId ?? "",
+                      externalId,
                       bucket,
                       exportPath: `${exportRoot(
                         prefix,
@@ -733,24 +800,23 @@ export function S3ExportConfigurationForm({
                     }}
                     region={region}
                   />
-                  {!createdHere && (
-                    <label className="flex items-center gap-2 text-sm">
-                      <Checkbox
-                        checked={createBucket}
-                        onChange={() => setCreateBucket(!createBucket)}
-                      />
-                      The stack creates the bucket <code>{bucket}</code>
-                    </label>
-                  )}
                   <TextInput
                     value={formState.values.roleArn}
                     onChange={formState.handleChange}
-                    label="Role ARN"
+                    label="AWS account ID"
                     id="roleArn"
-                    placeholder="arn:aws:iam::123456789012:role/convex/ConvexIntegrations-…"
+                    placeholder="123456789012"
                     error={fieldError("roleArn") ?? failure}
                     onBlur={formState.handleBlur}
-                    description="From the stack's Outputs tab."
+                    description={
+                      resolvedRoleArn ? (
+                        <>
+                          Convex connects to <code>{resolvedRoleArn}</code>
+                        </>
+                      ) : (
+                        "Find it in the account menu at the top right of the AWS console. You can also paste the stack's ARN."
+                      )
+                    }
                   />
                   <div className="flex flex-col gap-1">
                     {continueButton(1, "Next: sync settings")}
@@ -876,7 +942,7 @@ export function S3ExportConfigurationForm({
             onConfirm={async () => onClose()}
             confirmText="Finish later"
             dialogTitle="Leave without saving the role?"
-            dialogBody="The role ARN you pasted is not saved. The export stays pending until you save it."
+            dialogBody="The account ID you pasted is not saved. The export stays pending until you save it."
           />
         )}
         {(!pending || activeStep === 2) && (
@@ -909,6 +975,8 @@ export function S3ExportConfigurationForm({
   );
 }
 
+type SetupMethod = "console" | "terraform";
+
 function RoleSetup({
   role,
   region,
@@ -916,70 +984,62 @@ function RoleSetup({
   role: Parameters<typeof terraformRole>[0];
   region: string;
 }) {
-  const { externalId } = role;
+  const [method, setMethod] = useState<SetupMethod>("console");
   const terraform = terraformRole(role);
   return (
-    <>
-      <ol className="flex list-[lower-alpha] flex-col gap-1 pl-4 text-xs text-content-secondary">
-        <li>
-          Open AWS below. CloudFormation opens with the External ID, bucket and
-          export path filled in.
-        </li>
-        <li>
-          Tick the IAM acknowledgement and choose Create stack. It takes one to
-          two minutes.
-        </li>
-        <li>
-          On the stack's Outputs tab, copy <code>RoleArn</code> and paste it
-          here.
-        </li>
-      </ol>
-      <div className="flex flex-col gap-1">
-        <TextInput
-          value={externalId}
-          onChange={() => {}}
-          label="External ID"
-          id="externalId"
-          disabled
-          description="Generated by Convex for this export. The stack's trust policy requires it."
-        />
-        <CopyButton text={externalId} label="Copy External ID" size="sm" />
-      </div>
-      <Button
-        href={quickCreateUrl({ region, ...role })}
-        target="_blank"
-        variant="neutral"
-        size="sm"
+    <div className="flex flex-col gap-3">
+      <SegmentedControl<SetupMethod>
         className="self-start"
-      >
-        Open in AWS
-      </Button>
-      <Disclosure as="div" className="flex flex-col gap-2">
-        <DisclosureButton
-          as={Button}
-          variant="neutral"
-          size="sm"
-          className="self-start"
-        >
-          {({ open }) => (
-            <>
-              {open ? "Hide Terraform" : "Using Terraform or another IaC tool?"}
-            </>
-          )}
-        </DisclosureButton>
-        <DisclosurePanel className="flex flex-col gap-2">
-          <p className="text-xs text-content-secondary">
-            Add this to your Terraform instead of running the stack. It creates
-            the same role. Apply it, then paste the{" "}
-            <code>convex_export_role_arn</code> output below.
-          </p>
-          <CopyButton text={terraform} label="Copy Terraform" size="sm" />
-          <pre className="scrollbar max-h-64 overflow-auto rounded-sm border bg-background-tertiary p-2 font-mono text-xs">
-            {terraform}
-          </pre>
-        </DisclosurePanel>
-      </Disclosure>
-    </>
+        size="sm"
+        options={[
+          { label: "AWS console", value: "console" },
+          { label: "Terraform", value: "terraform" },
+        ]}
+        value={method}
+        onChange={setMethod}
+      />
+      {method === "console" ? (
+        <ol className="flex list-decimal flex-col gap-3 pl-5 text-sm">
+          <li>
+            <div className="flex flex-col items-start gap-2">
+              Open the stack in AWS. Every value is filled in.
+              <Button
+                href={quickCreateUrl({ region, ...role })}
+                target="_blank"
+                size="sm"
+                icon={<ExternalLinkIcon />}
+              >
+                Open in AWS
+              </Button>
+            </div>
+          </li>
+          <li>
+            Tick the IAM acknowledgement and choose Create stack. It takes one
+            to two minutes.
+          </li>
+          <li>Paste your AWS account ID below.</li>
+        </ol>
+      ) : (
+        <ol className="flex list-decimal flex-col gap-3 pl-5 text-sm">
+          <li>
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-col items-start gap-2">
+                Add this to your Terraform. It creates the same role as the
+                stack.
+                <CopyButton text={terraform} label="Copy Terraform" size="xs" />
+              </div>
+              <pre className="scrollbar max-h-64 overflow-auto rounded-sm border bg-background-tertiary p-2 font-mono text-xs">
+                {terraform}
+              </pre>
+            </div>
+          </li>
+          <li>
+            Run <code>terraform apply</code>.
+          </li>
+          <li>Paste your AWS account ID below.</li>
+        </ol>
+      )}
+    </div>
   );
 }
 
