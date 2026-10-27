@@ -3,6 +3,7 @@
 //! Each V5 writer must register in the replica database before serving writes.
 //! If replay may be incomplete, retirement permanently disables replay,
 //! persists that decision, and schedules deletion of the replica's data.
+mod comparison;
 mod config;
 mod metrics;
 mod persistence;

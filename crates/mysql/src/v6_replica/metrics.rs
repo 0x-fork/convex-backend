@@ -1,4 +1,4 @@
-//! Replay outcomes and writer lifecycle metrics, labeled by source cluster.
+//! Replay, read comparison, and writer lifecycle metrics by source cluster.
 use metrics::{
     register_convex_counter,
     register_convex_gauge,
@@ -42,6 +42,37 @@ pub(crate) enum RetireReason {
 pub(crate) fn log_retirement(cluster_name: &str, reason: RetireReason) {
     MYSQL_V6_REPLICA_RETIREMENTS_TOTAL
         .with_label_values(&[cluster_name, reason.into()])
+        .inc();
+}
+
+register_convex_counter!(
+    MYSQL_V6_REPLICA_COMPARISONS_TOTAL,
+    "Sampled V5 index scans by comparison outcome against the V6 replica",
+    &["cluster_name", "outcome"]
+);
+#[derive(Clone, Copy, Debug, Eq, PartialEq, strum::IntoStaticStr, strum::EnumIter)]
+#[strum(serialize_all = "snake_case")]
+pub(crate) enum ComparisonOutcome {
+    Sampled,
+    /// Comparison requires an active replica and a persistence index ID.
+    Ineligible,
+    /// The deployment's comparison concurrency limit was reached.
+    Dropped,
+    /// The V5 scan failed while collecting entries.
+    ServingError,
+    /// Source calls were in flight, replay timed out, or the replica stopped,
+    /// changed owners, or retired.
+    Invalidated,
+    /// Retention invalidated the scan's snapshot.
+    Expired,
+    /// Reading V6 entries or replica ownership state failed.
+    Error,
+    Mismatch,
+    Match,
+}
+pub(crate) fn log_comparison(cluster_name: &str, outcome: ComparisonOutcome) {
+    MYSQL_V6_REPLICA_COMPARISONS_TOTAL
+        .with_label_values(&[cluster_name, outcome.into()])
         .inc();
 }
 
@@ -121,6 +152,11 @@ pub(crate) fn initialize(cluster_name: &str) {
     for reason in RetireReason::iter() {
         MYSQL_V6_REPLICA_RETIREMENTS_TOTAL
             .with_label_values(&[cluster_name, reason.into()])
+            .inc_by(0);
+    }
+    for outcome in ComparisonOutcome::iter() {
+        MYSQL_V6_REPLICA_COMPARISONS_TOTAL
+            .with_label_values(&[cluster_name, outcome.into()])
             .inc_by(0);
     }
 }

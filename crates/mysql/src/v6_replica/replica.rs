@@ -41,6 +41,7 @@ use tokio::{
     sync::{
         mpsc,
         oneshot,
+        Semaphore,
     },
     time::Instant,
 };
@@ -104,10 +105,12 @@ pub(crate) struct ReplicaWriter<RT: Runtime> {
     /// Source V5 lease timestamp, checked when updating the handoff state to
     /// protect a newer writer's state from stale updates.
     pub(super) lease_ts: i64,
-    /// Set permanently on retirement, lease loss, or clean shutdown.
+    /// Stops replay and comparisons permanently on retirement, lease loss,
+    /// or clean shutdown.
     stopped: AtomicBool,
     queue: mpsc::Sender<ReplayQueueMessage<RT>>,
     pub(super) settings: Settings,
+    pub(super) comparison_permits: Arc<Semaphore>,
     writer_state_gauge: Arc<metrics::WriterStateGauge>,
 }
 
@@ -129,6 +132,7 @@ impl<RT: Runtime> ReplicaWriter<RT> {
             lease_ts: source.lease_ts,
             stopped: AtomicBool::new(false),
             queue,
+            comparison_permits: Arc::new(Semaphore::new(settings.max_concurrent_comparisons)),
             settings,
             writer_state_gauge,
         });
@@ -383,5 +387,17 @@ impl<RT: Runtime> ReplicaWriter<RT> {
             super::spawn_delete_data(self.target.clone(), self.deployment_id);
         }
         Ok(())
+    }
+
+    pub(crate) async fn is_active_owner(&self) -> anyhow::Result<bool> {
+        if self.is_stopped() {
+            return Ok(false);
+        }
+        let state =
+            state::read(&self.target.pool, &self.target.db_name, self.deployment_id).await?;
+        Ok(
+            state.is_some_and(|state| !state.retired && state.lease_ts == self.lease_ts)
+                && !self.is_stopped(),
+        )
     }
 }
