@@ -2086,49 +2086,6 @@
         }
       }
     },
-    "/teams/{team_slug}/usage/get_token_info": {
-      "get": {
-        "operationId": "get_token_info",
-        "parameters": [
-          {
-            "name": "team_slug",
-            "in": "path",
-            "description": "",
-            "required": true
-          },
-          {
-            "name": "from",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            },
-            "style": "form"
-          },
-          {
-            "name": "to",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            },
-            "style": "form"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GetTokenInfoResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/teams/{team_id}/oauth_apps": {
       "get": {
         "operationId": "list_oauth_apps_for_team",
@@ -5030,49 +4987,6 @@
                 "$ref": "#/components/schemas/SpendingLimitsState"
               }
             ]
-          }
-        }
-      },
-      "GetTokenInfoResponse": {
-        "type": "object",
-        "required": [
-          "tokensUsed",
-          "tokensQuota",
-          "centitokensUsed",
-          "centitokensQuota",
-          "isTeamDisabled",
-          "isPaidPlan",
-          "planType"
-        ],
-        "properties": {
-          "tokensUsed": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "tokensQuota": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "centitokensUsed": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "centitokensQuota": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "isTeamDisabled": {
-            "type": "boolean"
-          },
-          "isPaidPlan": {
-            "type": "boolean"
-          },
-          "planType": {
-            "type": "string"
           }
         }
       },

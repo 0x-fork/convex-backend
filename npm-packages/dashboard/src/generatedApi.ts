@@ -1213,22 +1213,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/teams/{team_slug}/usage/get_token_info": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["get_token_info"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/teams/{team_id}/oauth_apps": {
         parameters: {
             query?: never;
@@ -2330,19 +2314,6 @@ export interface components {
             warningThresholdCents?: number | null;
             state?: null | components["schemas"]["SpendingLimitsState"];
         };
-        GetTokenInfoResponse: {
-            /** Format: int64 */
-            tokensUsed: number;
-            /** Format: int64 */
-            tokensQuota: number;
-            /** Format: int64 */
-            centitokensUsed: number;
-            /** Format: int64 */
-            centitokensQuota: number;
-            isTeamDisabled: boolean;
-            isPaidPlan: boolean;
-            planType: string;
-        };
         GroupRoleMappingResponse: {
             role: components["schemas"]["Role"];
             customRoles?: components["schemas"]["TeamMemberCustomRole"][];
@@ -3148,7 +3119,6 @@ export type GetPricesResponse = components['schemas']['GetPricesResponse'];
 export type GetProjectEnvironmentResponse = components['schemas']['GetProjectEnvironmentResponse'];
 export type GetProjectEnvironmentsResponse = components['schemas']['GetProjectEnvironmentsResponse'];
 export type GetSpendingLimitsResponse = components['schemas']['GetSpendingLimitsResponse'];
-export type GetTokenInfoResponse = components['schemas']['GetTokenInfoResponse'];
 export type GroupRoleMappingResponse = components['schemas']['GroupRoleMappingResponse'];
 export type HasAssociatedWorkOsTeamResponse = components['schemas']['HasAssociatedWorkOSTeamResponse'];
 export type HasFailedPaymentResponse = components['schemas']['HasFailedPaymentResponse'];
@@ -4941,30 +4911,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TeamCurrentBillingPeriodResponse"];
-                };
-            };
-        };
-    };
-    get_token_info: {
-        parameters: {
-            query?: {
-                from?: string;
-                to?: string;
-            };
-            header?: never;
-            path: {
-                team_slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GetTokenInfoResponse"];
                 };
             };
         };
