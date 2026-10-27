@@ -1850,7 +1850,8 @@ pub static MAX_ECHO_BYTES: LazyLock<usize> =
 pub static MAX_USER_MODULES: LazyLock<usize> =
     LazyLock::new(|| env_config("MAX_USER_MODULES", 4096));
 
-/// Percentage of request traces that should sampled.
+/// Fraction of request traces to sample, overriding the built-in sampling
+/// rules.
 ///
 /// Sampling config is a JSON object with the following format:
 /// {
@@ -1875,17 +1876,8 @@ pub static MAX_USER_MODULES: LazyLock<usize> =
 /// and then stringify it at the end.
 ///
 /// See `fastrace_helpers.rs` for more examples
-pub static REQUEST_TRACE_SAMPLE_CONFIG: LazyLock<SamplingConfig> = LazyLock::new(|| {
-    env_config(
-        "REQUEST_TRACE_SAMPLE_CONFIG",
-        prod_override(
-            SamplingConfig::default(),
-            r#"{"defaultFraction":0.00001,"routeOverrides":[{"routeRegexp":"/api/push_config","fraction":0.1}, {"routeRegexp":"conductor/load-instance","fraction":0.01}, {"routeRegexp":"usage_tracking_worker/send_usage","fraction":0.01}, {"routeRegexp":"commit","fraction":0.01}]}"#
-                .parse()
-                .unwrap(),
-        ),
-    )
-});
+pub static REQUEST_TRACE_SAMPLE_CONFIG: LazyLock<SamplingConfig> =
+    LazyLock::new(|| env_config("REQUEST_TRACE_SAMPLE_CONFIG", "{}".parse().unwrap()));
 
 /// Size of the cache for access token authentication
 pub static AUTH_CACHE_SIZE: LazyLock<u64> = LazyLock::new(|| env_config("AUTH_CACHE_SIZE", 1000));
