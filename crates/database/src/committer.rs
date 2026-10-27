@@ -537,6 +537,9 @@ impl<RT: Runtime> Committer<RT> {
                                 let _commit_timer = metrics::commit_timer();
                                 metrics::log_commit_dequeued(submitted_at.elapsed());
                                 metrics::log_write_tx(&transaction);
+                                // Release the read set before replying. See
+                                // `CommitterClient::_commit`.
+                                drop(transaction);
                                 let _ = result.send(Err(error));
                                 continue;
                             },
@@ -1583,6 +1586,11 @@ impl CommitterClient {
         let latest_snapshot = self.snapshot_reader.lock().latest_snapshot();
         transaction.validate_memory_index_sizes(&latest_snapshot, &self.search_flusher_wake)?;
 
+        // Freeing a large read set is expensive, so it should happen on this
+        // task rather than the single committer thread. The committer releases
+        // its reference before replying, so holding this one until the reply
+        // makes this task free the read set.
+        let reads = transaction.reads.clone();
         let (tx, rx) = oneshot::channel();
         let message = CommitterMessage::Commit {
             submitted_at: rt.monotonic_now(),
@@ -1606,6 +1614,7 @@ impl CommitterClient {
         let Ok(result) = rx.await else {
             anyhow::bail!(metrics::shutdown_error());
         };
+        drop(reads);
         if let Err(e) = result {
             return Err(recapture_stacktrace(e).await);
         }
