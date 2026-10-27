@@ -510,6 +510,28 @@ export const S3ExportSetupForm: Story = {
   ),
 };
 
+// A role export created without its ARN yet: the form opens on Connect AWS.
+export const S3ExportFinishAwsSetup: Story = {
+  name: "S3 Export Finish AWS Setup",
+  render: () => {
+    const pending = s3Export(undefined);
+    pending.existing!.status = { type: "pending" };
+    pending.existing!.config = {
+      ...pending.existing!.config,
+      accessKeyId: "",
+      roleArn: "",
+      roleExternalId: "Qk9xT3mZa8vLw2Hc5RfG1uYpN7dB4eJs",
+    };
+    return (
+      <S3Providers>
+        <div className="flex h-192 w-2xl flex-col">
+          <S3ExportConfigurationForm integration={pending} onClose={() => {}} />
+        </div>
+      </S3Providers>
+    );
+  },
+};
+
 export const S3ExportComponentSelection: Story = {
   name: "S3 Export Component Selection",
   render: () => (
