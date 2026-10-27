@@ -49,6 +49,7 @@
     },
     "exclude": [
       "src/**/*.test.ts",
+      "src/test/helpers.ts",
       "src/test/fixtures/**"
     ],
     "selfLink": false
