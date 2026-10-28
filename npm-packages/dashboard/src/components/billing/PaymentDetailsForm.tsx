@@ -1,23 +1,17 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
   PaymentElement,
   useElements,
   useStripe,
 } from "@stripe/react-stripe-js";
-import {
-  StripePaymentElementOptions,
-  StripeElements,
-  SetupIntent,
-} from "@stripe/stripe-js";
+import { StripePaymentElementOptions, StripeElements } from "@stripe/stripe-js";
 import { Button } from "@ui/Button";
 import { cn } from "@ui/cn";
 
 export function PaymentDetailsForm({
-  retrieveSetupIntent,
   confirmSetup,
   showCardHoldNote = false,
 }: {
-  retrieveSetupIntent: () => Promise<SetupIntent | null>;
   confirmSetup: (
     elements: StripeElements,
   ) => Promise<{ error?: string; paymentMethod?: string } | undefined>;
@@ -27,10 +21,6 @@ export function PaymentDetailsForm({
   const elements = useElements();
 
   const [isLoading, setIsLoading] = useState(false);
-
-  useEffect(() => {
-    void retrieveSetupIntent();
-  }, [retrieveSetupIntent]);
 
   const paymentElementOptions: StripePaymentElementOptions = {
     layout: "tabs",

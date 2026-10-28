@@ -847,14 +847,16 @@ function UpdatePaymentMethod({
     },
     [onSave, updatePaymentMethod],
   );
-  const { stripePromise, options, retrieveSetupIntent, confirmSetup } =
-    useStripePaymentSetup(team, undefined, updatePaymentMethodCb);
+  const { stripePromise, options, confirmSetup } = useStripePaymentSetup(
+    team,
+    undefined,
+    updatePaymentMethodCb,
+  );
   const { preAuthorizePaymentMethodChange } = useLaunchDarkly();
 
   return options.clientSecret ? (
     <Elements stripe={stripePromise} options={options}>
       <PaymentDetailsForm
-        retrieveSetupIntent={retrieveSetupIntent}
         confirmSetup={confirmSetup}
         showCardHoldNote={preAuthorizePaymentMethodChange}
       />

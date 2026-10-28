@@ -26,7 +26,6 @@ const meta = {
       stripePromise: Promise.resolve(null) as any,
       options: stripeOptions,
       resetClientSecret: fn(),
-      retrieveSetupIntent: fn(async () => null) as any,
       confirmSetup: fn(async () => ({
         error: undefined,
         paymentMethod: "pm_test",

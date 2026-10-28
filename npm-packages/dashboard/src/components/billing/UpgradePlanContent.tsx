@@ -139,17 +139,12 @@ export function UpgradePlanContentContainer({
     [],
   );
 
-  const {
-    stripePromise,
-    options,
-    retrieveSetupIntent,
-    confirmSetup,
-    resetClientSecret,
-  } = useStripePaymentSetup(
-    team,
-    formState.values.paymentMethod ?? undefined,
-    setPaymentMethod,
-  );
+  const { stripePromise, options, confirmSetup, resetClientSecret } =
+    useStripePaymentSetup(
+      team,
+      formState.values.paymentMethod ?? undefined,
+      setPaymentMethod,
+    );
 
   return (
     <FormikProvider value={formState}>
@@ -187,10 +182,7 @@ export function UpgradePlanContentContainer({
           // so we can test the UpgradePlanContent component in isolation
           options.clientSecret ? (
             <Elements stripe={stripePromise} options={options}>
-              <PaymentDetailsForm
-                retrieveSetupIntent={retrieveSetupIntent}
-                confirmSetup={confirmSetup}
-              />
+              <PaymentDetailsForm confirmSetup={confirmSetup} />
             </Elements>
           ) : undefined
         }
