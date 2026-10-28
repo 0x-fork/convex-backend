@@ -11,12 +11,19 @@ type Metric = {
   field: UsageField | UsageField[];
   divisor?: number;
 };
-type MetricSection = Metric | ((prices: PricesPeriod["metrics"]) => Metric[]);
+type MetricSection = Metric | Metric[];
 
 const BYTES_PER_GB = 2 ** 30;
 
 const sections: Record<string, MetricSection> = {
-  compute: computeMetrics,
+  compute: [
+    {
+      name: "queryMutationComputeGbHours",
+      field: "queryMutationCompute",
+    },
+    { name: "actionComputeCpuGbHours", field: "actionComputeUser" },
+    { name: "actionComputeNodeJsGbHours", field: "actionComputeNode" },
+  ],
   actionCompute: {
     name: "actionComputeConvexGbHours",
     field: ["actionComputeConvex", "actionComputeNode"],
@@ -77,13 +84,18 @@ function discountedRate(price: PriceAmount | undefined): number | undefined {
   return amount * (1 - discount);
 }
 
+export type UsageSpend = {
+  amount: number;
+  missingDimensions: string[];
+};
+
 function metricSpend(
   summary: UsageSummaryRow[],
   metric: Metric,
   price: MetricPrice | undefined,
-): number | undefined {
-  if (!price) return undefined;
+): UsageSpend | undefined {
   let gross = 0;
+  const missingDimensions = new Set<string>();
   for (const row of summary) {
     const fields = Array.isArray(metric.field) ? metric.field : [metric.field];
     const quantities = fields.map(
@@ -96,6 +108,10 @@ function metricSpend(
     }
     const quantity = quantities.reduce((sum, value) => sum + value, 0);
     if (quantity === 0) continue;
+    if (!price) {
+      missingDimensions.add(metric.name);
+      continue;
+    }
     const amount =
       "rate" in price
         ? price.rate
@@ -104,43 +120,43 @@ function metricSpend(
           : price.deploymentClassRate[row.deploymentClass]?.regionRate[
               row.region
             ];
-    if (!amount) return undefined;
+    if (!amount) {
+      missingDimensions.add(
+        "regionRate" in price
+          ? row.region
+          : `${row.deploymentClass} / ${row.region}`,
+      );
+      continue;
+    }
     const rate = discountedRate(amount);
     if (rate === undefined) return undefined;
     gross += quantity * rate;
   }
-  return Number.isFinite(gross) ? gross : undefined;
-}
-
-function computeMetrics(prices: PricesPeriod["metrics"]): Metric[] {
-  const metrics: Metric[] = [
-    {
-      name: "queryMutationComputeGbHours",
-      field: "queryMutationCompute",
-    },
-    { name: "actionComputeCpuGbHours", field: "actionComputeUser" },
-    { name: "actionComputeNodeJsGbHours", field: "actionComputeNode" },
-  ];
-
-  return metrics.filter((metric) => prices[metric.name] !== undefined);
+  return Number.isFinite(gross)
+    ? { amount: gross, missingDimensions: [...missingDimensions].sort() }
+    : undefined;
 }
 
 export function getUsageSpend(
   summary: UsageSummaryRow[] | undefined,
   sectionMetric: string,
   pricesPeriod: PricesPeriod | undefined,
-): number | undefined {
+): UsageSpend | undefined {
   if (!summary || !pricesPeriod) return undefined;
   if (!Object.hasOwn(sections, sectionMetric)) {
     return undefined;
   }
 
   const section = sections[sectionMetric];
-  const metrics =
-    typeof section === "function" ? section(pricesPeriod.metrics) : [section];
-  if (metrics.length === 0) return undefined;
+  const metrics = Array.isArray(section) ? section : [section];
+  if (
+    !metrics.some((metric) => pricesPeriod.metrics[metric.name] !== undefined)
+  ) {
+    return undefined;
+  }
 
   let total = 0;
+  const missingDimensions = new Set<string>();
   for (const metric of metrics) {
     const spend = metricSpend(
       summary,
@@ -148,9 +164,14 @@ export function getUsageSpend(
       pricesPeriod.metrics[metric.name],
     );
     if (spend === undefined) return undefined;
-    total += spend;
+    total += spend.amount;
+    for (const dimension of spend.missingDimensions) {
+      missingDimensions.add(dimension);
+    }
   }
-  return Number.isFinite(total) ? total : undefined;
+  return Number.isFinite(total)
+    ? { amount: total, missingDimensions: [...missingDimensions].sort() }
+    : undefined;
 }
 
 export function formatSpend(value: number): string {

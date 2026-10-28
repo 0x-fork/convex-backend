@@ -8,10 +8,12 @@ import { useLaunchDarkly } from "hooks/useLaunchDarkly";
 import { formatQuantity } from "./lib/formatQuantity";
 import { ReactNode } from "react";
 import { TeamEntitlementsResponse } from "generatedApi";
+
 import {
   QuestionMarkCircledIcon,
   CrossCircledIcon,
   ChevronRightIcon,
+  ExclamationTriangleIcon,
 } from "@radix-ui/react-icons";
 import { cn } from "@ui/cn";
 import { useRouter } from "next/router";
@@ -20,6 +22,7 @@ import { Loading } from "@ui/Loading";
 import { formatDistanceToNowStrict } from "date-fns";
 import type { UsagePricing } from "./lib/usagePrices";
 import { getUsageSpend, formatSpend } from "./lib/usageSpend";
+import type { UsageSpend } from "./lib/usageSpend";
 
 const BUSINESS_METRIC_TO_SECTION: Record<string, string> = {
   functionCalls: "functionCalls",
@@ -435,7 +438,7 @@ export function BusinessPlanSummary({
                 ? section.metric === "aiGatewayCost"
                   ? aiCostFailed || aiGatewayCost === undefined
                     ? undefined
-                    : aiGatewayCost
+                    : { amount: aiGatewayCost, missingDimensions: [] }
                   : getUsageSpend(summary, section.metric, pricing.period)
                 : undefined;
 
@@ -544,10 +547,15 @@ export function BusinessPlanSummary({
                       </span>
                     ) : pricing.status === "loading" || aiCostPending ? (
                       <Loading fullHeight={false} className="h-4 w-16" />
-                    ) : spend === undefined ? (
-                      <span className="text-content-secondary">–</span>
                     ) : (
-                      <span>{formatSpend(spend)}</span>
+                      <SpendValue
+                        spend={spend}
+                        sectionTitle={section.title}
+                        showUnavailableWarning={
+                          pricing.status === "ready" &&
+                          section.metric !== "aiGatewayCost"
+                        }
+                      />
                     )}
                   </div>
                 )}
@@ -563,6 +571,78 @@ export function BusinessPlanSummary({
         )}
       </div>
     </Sheet>
+  );
+}
+
+function SpendValue({
+  spend,
+  sectionTitle,
+  showUnavailableWarning,
+}: {
+  spend: UsageSpend | undefined;
+  sectionTitle: string;
+  showUnavailableWarning: boolean;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1 whitespace-nowrap">
+      {spend === undefined || spend.missingDimensions.length > 0 ? (
+        <span className="text-content-secondary">–</span>
+      ) : (
+        formatSpend(spend.amount)
+      )}
+      {spend === undefined
+        ? showUnavailableWarning && <SpendWarning sectionTitle={sectionTitle} />
+        : spend.missingDimensions.length > 0 && (
+            <SpendWarning
+              sectionTitle={sectionTitle}
+              missingDimensions={spend.missingDimensions}
+            />
+          )}
+    </span>
+  );
+}
+
+function SpendWarning({
+  sectionTitle,
+  missingDimensions,
+}: {
+  sectionTitle: string;
+  missingDimensions?: string[];
+}) {
+  return (
+    <Tooltip
+      aria-label={
+        missingDimensions
+          ? "Incomplete billing information"
+          : "Missing billing information"
+      }
+      className="inline-flex shrink-0 items-center text-content-warning"
+      tip={
+        missingDimensions ? (
+          <div className="space-y-2 p-1 text-left">
+            <p>
+              Spend unavailable: billing information is missing for some
+              metrics, deployment classes, or regions.
+            </p>
+            <div>
+              <p className="mb-1 font-semibold">Missing billing information</p>
+              <ul className="list-none space-y-1 text-content-secondary">
+                {missingDimensions.map((dimension) => (
+                  <li key={dimension}>{dimension}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        ) : (
+          <p className="p-1 text-left">
+            Spend unavailable: {sectionTitle} spend cannot be calculated from
+            the available billing information.
+          </p>
+        )
+      }
+    >
+      <ExclamationTriangleIcon className="size-4" />
+    </Tooltip>
   );
 }
 

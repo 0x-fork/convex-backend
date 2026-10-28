@@ -11,7 +11,10 @@ export type UsagePricingError = {
 export type UsagePricing =
   | { status: "loading" }
   | { status: "error"; error: UsagePricingError }
-  | { status: "unavailable"; reason: "permission" | "unsupported-period" }
+  | {
+      status: "unavailable";
+      reason: "permission" | "unsupported-period";
+    }
   | { status: "ready"; period: PricesPeriod };
 
 export function getUsagePricing(
